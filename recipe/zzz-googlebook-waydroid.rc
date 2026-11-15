@@ -1,0 +1,396 @@
+# Googlebook OS on Waydroid: service overrides for running inside an LXC container.
+# Installed as /system_ext/etc/init/zzz-googlebook-waydroid.rc so it parses after the
+# /system and /system_ext definitions it overrides.
+
+# Keep vold, but don't take the whole container down when it fails, so logcat and
+# `waydroid shell` stay usable for debugging.
+service vold /system/bin/vold \
+        --blkid_context=u:r:blkid:s0 --blkid_untrusted_context=u:r:blkid_untrusted:s0 \
+        --fsck_context=u:r:fsck:s0 --fsck_untrusted_context=u:r:fsck_untrusted:s0
+    override
+    class core
+    ioprio be 2
+    task_profiles ProcessCapacityHigh
+    shutdown critical
+    group root reserved_disk
+    user root
+
+# Hardware-only security services: no Googlebook security chip (GSC) and no Trusty
+# security VM exist inside the container. Replace them with no-ops.
+service android.system.desktop.security.gscd /system/bin/true
+    override
+    oneshot
+    disabled
+
+service android.system.desktop.security.pinweaver_storaged /system/bin/true
+    override
+    oneshot
+    disabled
+
+service trusty_security_vm_launcher /system/bin/true
+    override
+    oneshot
+    disabled
+
+service trusty_security_protected_vm_launcher /system/bin/true
+    override
+    oneshot
+    disabled
+
+# Report an LTS kernel version to the Android 16 netbpfload (/system/bin/netbpfload-wd).
+# The host's 7.2 kernel has every BPF feature 6.12 does. (netd's network-namespace checks are
+# handled by the patched netd.o, see netbpfload.rc.)
+on early-init
+    setprop ro.bpf.kver_override 6.12.0
+
+# netd's one-shot setup: same as /system/etc/init/netd.rc but without reboot_on_failure,
+# so a failure doesn't take the container down while we debug it.
+service netd1shot /system/bin/netd oneshot
+    override
+    disabled
+    class main
+    capabilities BPF CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
+    user root
+    group root net_admin
+    rlimit memlock 1073741824 1073741824
+    updatable
+    oneshot
+
+# Android 17's libhidlbase (isHwbinderSupportedBlocking) first waits for the property
+# hwservicemanager.disabled to exist; newer hwservicemanagers always set it, the Android 16
+# one we use only sets it when HIDL is unsupported. Set it up front: an `on property:`
+# trigger can't be used, because init only processes those after late-init, and late-init
+# itself blocks on vold, which is waiting for this. Clients then wait for
+# hwservicemanager.ready=true as usual.
+on early-init
+    setprop hwservicemanager.disabled false
+
+# netd creates a BPF map at startup; the host has kernel.unprivileged_bpf_disabled=2, so that
+# needs CAP_BPF. Same definition as /system/etc/init/netd.rc plus BPF (container-internal only).
+service netd /system/bin/netd
+    override
+    disabled
+    class main
+    capabilities BPF CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
+    user root
+    group root net_admin
+    rlimit memlock 1073741824 1073741824
+    socket dnsproxyd stream 0660 root inet
+    socket mdns stream 0660 root system
+    socket fwmarkd stream 0660 root inet
+    updatable
+    onrestart restart zygote
+    onrestart restart zygote_secondary
+
+# Android 17's libprocessgroup puts processes under /sys/fs/cgroup/{system,apps}/uid_N, which
+# Android 17's init normally creates; the Android 16 init we run uses the flat layout. Create
+# them here (needs the container's cgroup subtree mounted read-write, see try.sh).
+on early-init
+    mkdir /sys/fs/cgroup/system 0775 system system
+    mkdir /sys/fs/cgroup/apps 0775 system system
+
+# Show the full Googlebook UI in one Wayland window without the (missing) waydroidplatform
+# service: single-window mode (read by hwcomposer at start) + active_apps=Waydroid (polled).
+on early-init
+    setprop persist.waydroid.multi_windows false
+
+# Touchpad two-finger scroll: hwcomposer only emits wheel events when scroll_sensitivity is set (it is
+# empty/off by default), so without this the host's two-finger scroll never reaches Android. Set a
+# sane default here so it survives a fresh /data. reverse_scrolling=false = content follows fingers.
+on early-init
+    setprop persist.waydroid.scroll_sensitivity 1.0
+    setprop persist.waydroid.reverse_scrolling false
+
+# Force GPU (CLIENT) composition instead of hwcomposer overlays. Waydroid's composer@2.1 SIGSEGVs in the
+# buffer-less-layer path (get_buffer_metadata_cros/create_buffer_cros null deref) during scroll/cursor
+# compositing, rebooting the container. With overlays disabled, SurfaceFlinger composites every layer on
+# the GPU into one framebuffer and never hands those buffer-less layers to hwcomposer -> no crash. Set
+# before surfaceflinger starts so it reads it at init. (The hwcomposer-nullbuf.py binary patch is belt.)
+on early-init
+    setprop debug.sf.disable_hwc_overlays 1
+
+# Bluetooth can't work in the container (no BT HAL, no wake-alarm timers). Its persistent app enables
+# the adapter and the stack aborts (timerfd, then LE-audio "requires Bluetooth Audio HAL V2", ...),
+# crash-looping until RescueParty reboots the whole system right before the desktop appears. Belt and
+# suspenders: (a) disable RescueParty so no single app's crash loop can reboot us before boot_completed,
+# (b) disable the LE-audio / related BT profiles so the stack stops aborting on the missing audio HAL.
+on early-init
+    setprop persist.sys.disable_rescue true
+    setprop persist.device_config.configuration.disable_rescue_party true
+    setprop bluetooth.profile.bap.unicast.client.enabled false
+    setprop bluetooth.profile.bap.broadcast.source.enabled false
+    setprop bluetooth.profile.bap.broadcast.assist.enabled false
+    setprop bluetooth.profile.hap.client.enabled false
+    setprop bluetooth.profile.csip.set_coordinator.enabled false
+    setprop bluetooth.profile.vcp.controller.enabled false
+    setprop bluetooth.profile.mcp.server.enabled false
+    setprop bluetooth.profile.ccp.server.enabled false
+
+# We run ro.zygote=zygote64 (64-bit only; the Googlebook system has no 32-bit libs/linker). But the
+# framework always has a secondary-zygote socket address, and ActivityManagerService.finishBooting ->
+# ZygoteProcess.bootCompleted() connects to /dev/socket/zygote_secondary to notify it; with no secondary
+# zygote that connect throws -> FATAL on the android.display thread -> system_server crashes right as it
+# finishes booting (the "almost reaches desktop then restarts" loop). Provide a secondary zygote that is
+# just a second 64-bit app_process64 (no --start-system-server): it's never used for forking (abilist32
+# is empty, so no 32-bit app is ever routed to it), it only needs to exist so bootCompleted succeeds.
+service zygote_secondary /system/bin/app_process64 -Xzygote /system/bin --zygote --socket-name=zygote_secondary --enable-lazy-preload
+    class main
+    priority -20
+    user root
+    group root readproc reserved_disk
+    socket zygote_secondary stream 660 root system
+    socket usap_pool_secondary stream 660 root system
+    task_profiles ProcessCapacityHigh MaxPerformance
+
+# Present the full Android display as one host Wayland window as soon as SurfaceFlinger is up, not at
+# boot_completed. In single-window mode Waydroid only holds a persistent on-screen window while
+# waydroid.active_apps is set; gating it on boot_completed meant nothing stayed on screen during boot
+# (just a flash of the boot animation). Setting it at surfaceflinger-start lets the boot animation and
+# every pre-boot_completed screen (e.g. the setup wizard) actually show.
+on property:init.svc.surfaceflinger=running
+    setprop waydroid.active_apps Waydroid
+
+on property:sys.boot_completed=1
+    setprop waydroid.active_apps Waydroid
+
+# input-bridge: Waydroid's hwcomposer writes host keyboard/mouse/touch as struct input_event streams to
+# /dev/input/wl_*_events, but stock Googlebook EventHub can't read those (not evdev -> ENOTTY -> skipped,
+# so no input). This daemon mirrors them into real uinput devices that EventHub reads normally. Started
+# once the display/hwcomposer is up (it also waits for the wl_* nodes to appear). See input-bridge.c.
+service gb-inputbridge /system/bin/input-bridge
+    class main
+    user root
+    group root input
+    disabled
+
+on property:init.svc.surfaceflinger=running
+    start gb-inputbridge
+
+# The container shares the host's RAM, and under memory pressure the host/cgroup OOM killer was reaping
+# system_server (and surfaceflinger) even at their normal protective adjustments, restarting the whole
+# UI. Pin them to oom_score_adj -1000 (OOM-immune, OOM_SCORE_ADJ_MIN) and re-apply, since their pids
+# change across restarts. (Found live: echo -1000 > /proc/<system_server>/oom_score_adj.)
+service gb-oomguard /system/bin/sh /system/bin/gb-oomguard.sh
+    class main
+    user root
+    group root
+    disabled
+
+on nonencrypted
+    start gb-oomguard
+
+# gb-wallsync: mirror user 10's wallpaper/theme/clock to user 0 (the login screen and keyguard are drawn as user 0).
+# It used to be started with `nohup ... &` from gb-firstboot.sh, but init kills a oneshot service's whole process group when it exits,
+# so after every boot the daemon was dead and the login screen lost its wallpaper/theme (found 2026-10-25). Own service now.
+service gb-wallsync /system/bin/sh /system/bin/wallpaper-sync-daemon.sh
+    class main
+    user root
+    group root
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-wallsync
+
+# First-boot provisioning: mark device/users set up and disable the desktop setup wizard so we land on
+# the launcher, not the first-run flow. Runs once at boot_completed (settings/pm need the framework up).
+# /data is rebuilt each try.sh, so this re-applies every boot. See gb-firstboot.sh.
+service gb-firstboot /system/bin/sh /system/bin/gb-firstboot.sh
+    class main
+    user root
+    group root system
+    oneshot
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-firstboot
+
+# gb-audiofix: AudioFlinger comes up with master mute ON (AudioService thinks it is off), so nothing is audible. Watches for a few
+# minutes after boot and cycles master mute true->false (audioctl.apk) until it is really off. See gb-audiofix.sh.
+service gb-audiofix /system/bin/sh /system/bin/gb-audiofix.sh
+    class main
+    user root
+    group root system
+    oneshot
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-audiofix
+
+# gb-lan: container half of the LAN presence (host daemon gb-lan.py creates an ipvlan NIC eth1 on the host's LAN). Applies the static IP
+# the host chose to Android's Ethernet manager before eth1 exists. Idle (just polls) when the host daemon is not installed.
+service gb-lan /system/bin/sh /system/bin/gb-lan.sh
+    class main
+    user root
+    group root system
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-lan
+
+# gb-storagemount: keeps per-user emulated ("sdcard") storage mounted. StorageManager/vold never
+# auto-mounts the emulated;N volumes in this container, and a user's volume only becomes mountable after
+# that user unlocks (login) — after boot_completed — so a one-shot misses the active user. This daemon
+# mounts any unmounted emulated volume as it appears. See gb-storagemount.sh.
+service gb-storagemount /system/bin/sh /system/bin/gb-storagemount.sh
+    class main
+    user root
+    group root system sdcard_rw media_rw
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-storagemount
+
+# vpd-stub: registers vendor.google.desktop.vpd_executor.IVpdExecutor/default (a placeholder binder).
+# Googlebook's DesktopRepairModeService.onBootPhase() otherwise blocks system_server's main thread in
+# ServiceManager.waitForService() for this VPD HAL, which can't exist in the container (no vpd
+# partition) -> Watchdog kill. Started at post-fs-data (servicemanager is up, long before the framework
+# boot phase that queries it). Native libbinder_ndk binary, so the system_server crash loop can't affect
+# it. See vpd-stub.c.
+service vpd-stub /system/bin/vpd-stub
+    user root
+    group system
+    disabled
+
+on post-fs-data
+    start vpd-stub
+
+# init queues "nonencrypted" from mount_all once /data is usable; Waydroid mounts the partitions from
+# outside and never runs mount_all, so the trigger never fires. Googlebook's init.rc only starts
+# class late_start from `on nonencrypted` (gatekeeperd, traced, usbd, ...), and without gatekeeperd
+# BiometricService throws "Gatekeeper service not available" and system_server crash-loops.
+# Fire it where a real device would have it: /data is ready by zygote-start.
+on zygote-start
+    trigger nonencrypted
+
+# audioserver: the stock service runs as uid audioserver with capabilities BLOCK_SUSPEND/SYS_NICE/
+# WAKE_ALARM. In the container init "cannot set capabilities for audioserver" and it exits status 6
+# before AudioFlinger ever initializes -> media.audio_flinger never registers -> AudioService.<init>
+# hangs 65s in muteMicrophone() -> Watchdog kills system_server. Run it as root with no capability/
+# rtprio lines (root already holds the caps the container grants); it then reaches onFirstRef and
+# brings up AudioFlinger via the passthrough audio HAL (see try.sh manifest rewrite).
+service audioserver /system/bin/audioserver
+    override
+    class core
+    user root
+    group audio camera drmrpc media mediadrm net_bt net_bt_admin net_bw_acct wakelock
+    ioprio rt 4
+    task_profiles ProcessCapacityHigh HighPerformance
+    # The audio HAL (audio.primary.waydroid) opens the ALSA "pulse" PCM through libasound, whose compiled-in plugin
+    # directory is the 32-bit path /vendor/lib/hw/ (there only a 32-bit plugin exists, which a 64-bit process cannot
+    # load -> snd_pcm_open fails with ENOENT). The 64-bit plugins are in /vendor/lib64/hw.
+    setenv ALSA_PLUGIN_DIR /vendor/lib64/hw
+
+# installd (class main) races /data preparation at boot and crashes on first start; system_server
+# then blocks on it (StorageStats/PackageManager time out) and the Watchdog kills system_server.
+# It runs fine once /data is ready, so start it explicitly after post-fs-data, and again once
+# /data user storage is prepared, before the framework needs it.
+on post-fs-data
+    start installd
+
+on property:sys.user.0.ce_available=true
+    restart installd
+
+# Linux Terminal / AVF: virtualizationservice (lazy, started by servicemanager on first use) is declared in its APEX rc as
+# `user system` with no capabilities. Its removeMemlockRlimit() then fails with EPERM (SELinux is off here, so nothing
+# else grants the privilege), virtmgr panics ("Failed to remove memlock rlimit") and no VM can start. Run it as root
+# instead. Verified by hand: as root `vm info` works. `override` so this wins whichever rc file is parsed first.
+service virtualizationservice /apex/com.android.virt/bin/virtualizationservice
+    override
+    class main
+    user root
+    group system usb
+    disabled
+    oneshot
+    interface aidl android.system.virtualizationservice
+    interface aidl android.system.virtualizationmaintenance
+    interface aidl android.hardware.security.keymint.IRemotelyProvisionedComponent/avf
+
+# Bluetooth suspend: the Bluetooth stack suspends itself (drops ACLs, scan mode none, stops LE scans, pauses advertising) when
+# Android's DeviceStateManager reports a closed lid. The container has no lid sensor, so the device state is permanently 'CLOSED'
+# (dumpsys device_state) and the stack stayed suspended: LE scans returned nothing and Nearby/Fast Pair advertising was rejected
+# ("rejecting start during suspend"). These are plain (non ro.) properties set to true by the image and read when the adapter
+# service starts; set them false here so the radio is never suspended.
+on early-init
+    setprop bluetooth.power.suspend.disconnect_acl.enabled false
+    setprop bluetooth.power.suspend.pause_advertisement.enabled false
+    setprop bluetooth.power.suspend.scan_mode_none.enabled false
+    setprop bluetooth.power.suspend.stop_le_scan.enabled false
+
+# ART/dex2oat: this is a 64-bit-only system (zygote64, abilist32 empty) but dalvik.vm.dex2oat64.enabled was never set, so ART
+# launched the 32-bit /apex/com.android.art/bin/dex2oat32 (which cannot run here) for every dexopt, even for the
+# oat/x86_64 target. Result: every dexopt (installs, updates, background compile) aborted with a tombstone
+# ("Failed to execute dex2oat32") and apps stayed at "verify"/"run-from-apk", i.e. never AOT-compiled. Not a ro. property.
+on early-init
+    setprop dalvik.vm.dex2oat64.enabled true
+
+# Bluetooth HCI HAL: replaces the stock vendor.bluetooth-1-1 (simulated RootCanal controller) with a launcher that uses the host's REAL
+# adapter through the Java HAL + host helper (gb-bt-bridge) when the helper is reachable, and falls back to the simulated controller
+# otherwise. Defined here (system_ext rc is parsed before /vendor rc, so this definition wins; `override` for the other order).
+service vendor.bluetooth-1-1 /system/bin/sh /system/bin/gb-bthal.sh
+    override
+    class hal
+    user root
+    group root bluetooth
+
+# Fake Wi-Fi (HAL stub + wificond stub), see /system/bin/gb-wifi.sh. Registers IWifi/default (declared in
+# /vendor/etc/vintf/manifest/android.hardware.wifi.xml) and wifinl80211 so Android's Wi-Fi service can reach "enabled".
+service gb-wifi /system/bin/sh /system/bin/gb-wifi.sh
+    class hal
+    user root
+    group root wifi
+
+# gb-fakeap: simulated Wi-Fi access point (wlan1, hostapd + gb-dhcpd + NAT) that carries the host's Wi-Fi name, so GBOS shows a connected
+# Wi-Fi network. Follows /data/local/tmp/gb-host-ssid (published by the host service). See /system/bin/gb-fakeap.sh, section 3.20.
+service gb-fakeap /system/bin/sh /system/bin/gb-fakeap.sh
+    class main
+    user root
+    group root wifi
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-fakeap
+
+# gb-portrelay: 127.0.0.1:2222 -> the Terminal app's VM sshd, so Antigravity can reach it (portrelay/, GBOS_WAYDROID_FIXES.md).
+service gb-portrelay /system/bin/sh /system/bin/gb-portrelay.sh
+    class main
+    user root
+    group root inet
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-portrelay
+
+# gb-fridaserver: the instrumentation daemon every App Cast session attaches to ambient through. Starting it
+# by hand after each Waydroid restart was one of the three manual steps left in the cast startup; it also
+# restarts the server if it dies (a dead server looks exactly like "the cast window stopped updating"). The
+# 171 MB binary stays in /data/local/tmp (version-locked to the host client), NOT in the system image: this
+# waits for the host supervisor to push one when a /data rebuild removed it. See gb-fridaserver.sh.
+service gb-fridaserver /system/bin/sh /system/bin/gb-fridaserver.sh
+    class main
+    user root
+    group root
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-fridaserver
+
+# Googlebook Sign-In Unlock Daemon: automatically dismisses MinuteMaid "Checking info..."
+# loading overlay by invoking window.mm.showView() over DevTools unix socket.
+service unlock-signin /system/bin/unlock-signin --foreground
+    class main
+    user root
+    group root
+
+on property:sys.boot_completed=1
+    setprop service.adb.tcp.port 5555
+    setprop persist.adb.tcp.port 5555
+    # adbd was seen logging 'listening on tcp:0.0.0.0:5555' while binding nothing (2026-10-19, listen_addrs had that
+    # form); the plain tcp:PORT form works, so set it explicitly.
+    setprop service.adb.listen_addrs tcp:5555
+    # userdebug build: come up as `adb root` (uid 0) on every boot, same as running `adb root` by hand.
+    setprop service.adb.root 1
+    restart adbd
+    start unlock-signin
+
+
+

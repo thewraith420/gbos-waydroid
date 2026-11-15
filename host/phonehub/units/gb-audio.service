@@ -1,0 +1,12 @@
+[Unit]
+Description=GBOS Cast audio: plays the phone's cast audio on this laptop (:8101)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @PHONEHUB@/injector/audio_relay.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

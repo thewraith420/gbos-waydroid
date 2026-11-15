@@ -1,0 +1,12 @@
+[Unit]
+Description=Share the host Bluetooth adapter with the Waydroid container (gb-bt-bridge)
+After=network.target bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/gb-bt-bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

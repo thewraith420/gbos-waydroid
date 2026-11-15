@@ -1,0 +1,12 @@
+[Unit]
+Description=GBOS Cross-Device link keeper (forces the app's discovery gate under jdb)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@PHONEHUB@/gb-hub-link.sh
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=default.target

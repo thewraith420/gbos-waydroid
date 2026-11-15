@@ -1,0 +1,12 @@
+[Unit]
+Description=GBOS link control daemon (for the Waydroid widget and desktop controls)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @PHONEHUB@/gb-link-daemon.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

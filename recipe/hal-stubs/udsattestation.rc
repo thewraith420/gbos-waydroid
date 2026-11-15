@@ -1,0 +1,7 @@
+# Disabled: no Google Security Chip (GSC/Titan) hardware in this container.
+# Prevents infinite 1s polling and SELinux spam.
+service android.system.desktop.security.udsattestation /system/bin/true
+    class main
+    oneshot
+    disabled
+

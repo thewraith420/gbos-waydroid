@@ -1,0 +1,12 @@
+[Unit]
+Description=GBOS Venus Vulkan render server (optional hybrid-GPU mode)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@GPULIB@/run-venus-daemon.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

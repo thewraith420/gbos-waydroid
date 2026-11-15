@@ -1,0 +1,5 @@
+# Expected sha256 of the prebuilt release assets. Written by tools/make-release.sh; the installer checks downloads against it.
+# Format: sha256  size  name  note
+6aa3f2c08bd53a7d4a03ac0fd7b5eca66d807b3eee14427034bd1b6dc4ba1c49  16416  input-bridge  NDK r27c build, reproducible
+3d7ca7d60f28b88971e103f5d338817c1b7cc17fb2920b98cc18945af8f685bd  6712  vpd-stub  NDK r27c build, reproducible
+7c8b9e2fa29d7a505814538965f56ba40dd1e5f6a22ef3d6f03ba5b3cc30d17c  16832  vulkan.hybrid64.so  the tested binary (linked with host gcc)

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- iface;capabilities;static-ip (empty = leave to ethcfg);transport (1 = TRANSPORT_WIFI).
+         Capabilities 11 NOT_METERED, 12 INTERNET, 13 NOT_RESTRICTED, 14 TRUSTED, 15 NOT_VPN, 28 NOT_VCN_MANAGED, 37 NOT_BANDWIDTH_CONSTRAINED (requests ask for it, so the offer must have it)
+         (NOT_ROAMING/NOT_CONGESTED/NOT_SUSPENDED are always added by the parser). eth0 (the NAT link) is not listed and stays Ethernet. -->
+    <string-array name="config_ethernet_interfaces" translatable="false">
+        <item>eth1;11,12,13,14,15,28,37;;1</item>
+    </string-array>
+</resources>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">GBOS Cast</string>
+    <string name="acc_desc">Lets GBOS Cast apply the taps and swipes sent from the Googlebook, so the App Cast window can control this phone without wireless debugging.</string>
+</resources>

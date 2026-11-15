@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@color/widget_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="16dp">
+
+        <ImageView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_phone_hub"
+            android:contentDescription="Icon"
+            android:layout_marginEnd="12dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="GBOS Phone Hub Link"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/status_cds"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Cross-Device Services: Checking …"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/status_pixel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Pixel 7: Checking …"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/status_appcast"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="AppCast Screen: Checking …"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:layout_marginBottom="20dp" />
+
+    <Button
+        android:id="@+id/btn_reconnect"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="Reconnect &amp; Fix Now"
+        android:background="@drawable/btn_pill"
+        android:textColor="#062e6f"
+        android:textStyle="bold"
+        android:textSize="16sp"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_launch"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Open AppCast Window"
+        android:background="@drawable/card_bg"
+        android:textColor="#a8c7fa"
+        android:textStyle="bold"
+        android:textSize="15sp"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_pin_widget"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Pin Widget to Home Screen"
+        android:background="@drawable/card_bg"
+        android:textColor="#a8c7fa"
+        android:textStyle="bold"
+        android:textSize="15sp"
+        android:layout_marginBottom="16dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Tip: Long-press your home screen to add the Phone Hub widget for 1-click access."
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp"
+        android:gravity="center" />
+
+</LinearLayout>

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gbos.cast"
+    android:versionCode="1" android:versionName="1.0">
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Playback capture (sending the phone's audio to the Googlebook) requires RECORD_AUDIO. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Bring the cast back by itself after a reboot (see BootReceiver). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--"development" permission, granted once with `adb shell pm grant com.gbos.cast
+        android.permission.WRITE_SECURE_SETTINGS`. It is what lets the Re-arm button flip
+        adb_wifi_enabled on after a reboot, so the laptop can bootstrap the gesture agent and then
+        switch wireless debugging straight back off. Needs re-granting only after a reinstall. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <!-- Package visibility (Android 11+): without this the app cannot see other launcher apps, and
+         AppSync would send an empty list. Only the standard launcher intent is declared, which is far
+         narrower than QUERY_ALL_PACKAGES. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application android:label="GBOS Cast" android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.GBOSCast">
+        <activity android:name=".MainActivity" android:exported="true" android:label="GBOS Cast">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Opens a phone notification tapped on GBOS (see OpenNotifActivity). Started by the shell
+             gesture agent; DUMP is held by shell and not by ordinary apps, so nothing else on the
+             phone can drive it. -->
+        <activity android:name=".OpenNotifActivity" android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true" android:noHistory="true"
+            android:taskAffinity="" android:launchMode="singleInstance" />
+        <service android:name=".NotifListener" android:exported="true"
+            android:label="GBOS Cast notification opener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- Quick Settings tiles: start/stop the cast, and "sound on the Googlebook only". -->
+        <service android:name=".CastTileService" android:exported="true"
+            android:label="GBOS Cast" android:icon="@drawable/ic_tile_cast"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
+        <service android:name=".SoundTileService" android:exported="true"
+            android:label="Cast sound" android:icon="@drawable/ic_tile_sound"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
+        <service android:name=".CaptureService" android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+        <!-- Auto-start after a reboot; the TEST_BOOT action lets adb exercise this without one. -->
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.gbos.cast.TEST_BOOT" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".CastAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true"
+            android:label="GBOS Cast input">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice"
+                android:resource="@xml/cast_accessibility" />
+        </service>
+    </application>
+</manifest>

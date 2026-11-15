@@ -1,0 +1,11 @@
+[Unit]
+Description=GBOS: stop the Waydroid session when Android has powered itself off
+
+[Service]
+Type=simple
+ExecStart=@PHONEHUB@/gb-autostop.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

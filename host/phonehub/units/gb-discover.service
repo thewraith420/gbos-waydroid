@@ -1,0 +1,12 @@
+[Unit]
+Description=GBOS Cast laptop auto-discovery responder (UDP :8096)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @PHONEHUB@/injector/discover_host.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

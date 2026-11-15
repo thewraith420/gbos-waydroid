@@ -1,0 +1,14 @@
+[Unit]
+Description=Put the Waydroid container on the host's LAN (gb-lan, ipvlan eth1)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/gb-lan.py
+Restart=always
+RestartSec=5
+# remove the NIC when the service stops
+ExecStopPost=/usr/local/sbin/gb-lan.py --down
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_bg">#282a2e</color>
+    <color name="btn_bg">#43464d</color>
+    <color name="btn_reconnect">#a8c7fa</color>
+    <color name="text_primary">#e3e3e3</color>
+    <color name="text_secondary">#c4c7c5</color>
+    <color name="status_green">#6dd58c</color>
+    <color name="status_orange">#f2b8b5</color>
+</resources>
+

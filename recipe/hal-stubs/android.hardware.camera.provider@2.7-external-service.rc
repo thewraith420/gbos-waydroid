@@ -1,0 +1,7 @@
+# Disabled: 32-bit binary cannot execute on this 64-bit-only system
+service vendor.camera-provider-2-7-ext /system/bin/true
+    class hal
+    user cameraserver
+    oneshot
+    disabled
+

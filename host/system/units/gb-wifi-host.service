@@ -1,0 +1,13 @@
+[Unit]
+Description=Give the Waydroid container a virtual Wi-Fi radio (gb-wifi-host, mac80211_hwsim)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/wifi-hwsim.sh watch
+Restart=always
+RestartSec=5
+ExecStopPost=/usr/local/sbin/wifi-hwsim.sh down
+
+[Install]
+WantedBy=multi-user.target

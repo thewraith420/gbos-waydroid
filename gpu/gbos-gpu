@@ -1,0 +1,525 @@
+#!/usr/bin/env python3
+"""gbos-gpu: the OPTIONAL hybrid-GPU mode for GBOS.
+
+Nothing in the normal GBOS install touches this. It exists for one specific kind of machine, a laptop (or PC)
+with an Intel integrated GPU that Waydroid renders on, plus an NVIDIA GPU running the proprietary driver. In
+that setup Android's Vulkan can be sent to the NVIDIA GPU through a host "Venus" render server, while the
+desktop and everything that is not Vulkan stays on the Intel GPU. If your machine is different, `detect` says so
+and `enable` refuses; GBOS works fine without any of this.
+
+    gbos-gpu detect  [--json]                 check this machine (no root needed)
+    gbos-gpu status                           what is installed and applied
+    sudo gbos-gpu enable --stage-dir DIR [--user NAME] [--nvidia-node /dev/dri/renderDN] [--force] [--adopt] [--dry-run]
+    sudo gbos-gpu apply                       re-apply after `waydroid upgrade` / `waydroid init` (they rewrite the files)
+    sudo gbos-gpu disable [--purge]           undo everything `enable` did
+
+What `enable` changes, and nothing else:
+  * installs the guest/host files into /usr/local/lib/gbos-gpu (root-owned: they are mounted into the container
+    as root, so they must not live in a directory a normal user can write to),
+  * adds ONE marked block to Waydroid's lxc config_nodes and sets three properties in waydroid.prop /
+    waydroid_base.prop, remembering the previous values so `disable` restores them exactly,
+  * writes the user unit gbos-venus.service into the user's ~/.config/systemd/user (you enable it yourself).
+
+Python 3.8+, standard library only.
+"""
+import argparse
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+LIB = "/usr/local/lib/gbos-gpu"
+WAYDROID = "/var/lib/waydroid"
+NODES = WAYDROID + "/lxc/waydroid/config_nodes"
+PROPS = [WAYDROID + "/waydroid.prop", WAYDROID + "/waydroid_base.prop"]
+STATE = WAYDROID + "/gbos-gpu.json"
+UNIT = "gbos-venus.service"
+BEGIN = "# >>> gbos-gpu (managed block; remove with: gbos-gpu disable) >>>"
+END = "# <<< gbos-gpu <<<"
+PROP_SET = {
+    "ro.hardware.vulkan": "virtio",                      # Android loads vulkan.virtio.so = our routing shim
+    "mesa.vn.debug": "vtest,no_abort",                   # guest Venus driver talks to a vtest-style socket
+    "mesa.vtest.socket.name": "/dev/venus/venus.sock",
+}
+# stage-dir path -> (mode). The installer (`gbos-install.py gpu-prepare`) produces exactly this layout.
+STAGE = {
+    "host/virgl_test_server": 0o755,
+    "host/virgl_render_server": 0o755,
+    "host/libvirglrenderer.so.1": 0o644,
+    "guest/lib64/vulkan.virtio.so": 0o644,      # our shim; loads the two drivers below / the native one
+    "guest/lib64/vulkan.pastel.so": 0o644,      # the upstream Venus guest driver (64-bit)
+    "guest/lib/vulkan.virtio.so": 0o644,        # the upstream Venus guest driver (32-bit, untouched)
+    "guest/vendor/bin/waydroid-init": 0o755,    # vendor waydroid-init with the one-byte property rename
+    "run-venus-daemon.sh": 0o755,
+    UNIT: 0o644,
+}
+VENDORS = {"0x8086": "Intel", "0x10de": "NVIDIA", "0x1002": "AMD"}
+
+ROOT = "/"          # --root DIR makes every host path live under DIR (tests); LIB etc. stay the real strings in configs
+
+
+def P(path):
+    return path if ROOT == "/" else os.path.join(ROOT, path.lstrip("/"))
+
+
+def die(msg):
+    sys.exit("gbos-gpu: " + msg)
+
+
+# ------------------------------------------------------------------------------------------ detection
+def drm_nodes():
+    """[{node, vendor, name, driver}] for every render node, from sysfs."""
+    out = []
+    base = P("/sys/class/drm")
+    if not os.path.isdir(base):
+        return out
+    for n in sorted(os.listdir(base)):
+        if not re.fullmatch(r"renderD\d+", n):
+            continue
+        dev = os.path.join(base, n, "device")
+        try:
+            vendor = open(os.path.join(dev, "vendor")).read().strip()
+        except OSError:
+            vendor = ""
+        try:
+            driver = os.path.basename(os.readlink(os.path.join(dev, "driver")))
+        except OSError:
+            driver = ""
+        out.append({"node": "/dev/dri/" + n, "vendor": vendor, "name": VENDORS.get(vendor, vendor or "?"),
+                    "driver": driver})
+    return out
+
+
+def waydroid_render_node(lines=None):
+    """The render node Waydroid itself mounts (outside our block): the GPU it draws the desktop on."""
+    if lines is None:
+        try:
+            lines = open(P(NODES)).read().splitlines()
+        except OSError:
+            return None
+    inside = False
+    for ln in lines:
+        if ln.strip() == BEGIN:
+            inside = True
+        elif ln.strip() == END:
+            inside = False
+        elif not inside:
+            m = re.match(r"\s*lxc\.mount\.entry\s*=\s*(/dev/dri/renderD\d+)\s", ln)
+            if m:
+                return m.group(1)
+    return None
+
+
+def find_icd():
+    for d in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d", "/usr/local/share/vulkan/icd.d"):
+        f = os.path.join(d, "nvidia_icd.json")
+        if os.path.isfile(P(f)):
+            return f
+    return None
+
+
+def run_detect(nvidia_override=None):
+    """Return (nodes, checks, nvidia_node, icd). checks = [(level, text)], level in ok/warn/fail/soft."""
+    nodes = drm_nodes()
+    checks = []
+
+    wd_ok = shutil.which("waydroid") is not None or ROOT != "/"
+    inited = os.path.isfile(P(NODES))
+    if not wd_ok:
+        checks.append(("fail", "Waydroid is not installed"))
+    elif not inited:
+        checks.append(("fail", "Waydroid is not initialised yet (%s is missing): finish the normal GBOS install first" % NODES))
+    else:
+        checks.append(("ok", "Waydroid is installed and initialised"))
+
+    nv = [n for n in nodes if n["vendor"] == "0x10de" and n["driver"] == "nvidia"]
+    nouveau = [n for n in nodes if n["vendor"] == "0x10de" and n["driver"] != "nvidia"]
+    nvidia = None
+    if nvidia_override:
+        nvidia = next((n for n in nodes if n["node"] == nvidia_override), None)
+        if not nvidia:
+            checks.append(("fail", "--nvidia-node %s is not a render node on this machine" % nvidia_override))
+    elif len(nv) == 1:
+        nvidia = nv[0]
+    elif len(nv) > 1:
+        checks.append(("fail", "more than one NVIDIA GPU (%s): choose one with --nvidia-node" % ", ".join(n["node"] for n in nv)))
+    if nvidia:
+        checks.append(("ok", "NVIDIA proprietary driver is bound to %s" % nvidia["node"]))
+    elif not nv and nouveau:
+        checks.append(("fail", "the NVIDIA GPU is driven by '%s', not the proprietary driver this mode needs" % nouveau[0]["driver"]))
+    elif not nv and not nvidia_override:
+        checks.append(("fail", "no NVIDIA GPU with the proprietary driver found (this mode is NVIDIA-only)"))
+
+    wnode = waydroid_render_node()
+    wgpu = next((n for n in nodes if n["node"] == wnode), None) if wnode else None
+    if wgpu is None and wnode is None and inited:
+        checks.append(("warn", "could not tell which GPU Waydroid renders on"))
+    if wgpu:
+        if nvidia and wgpu["node"] == nvidia["node"]:
+            checks.append(("fail", "Waydroid already renders on the NVIDIA GPU (%s): there is nothing to split" % wgpu["node"]))
+        elif wgpu["vendor"] == "0x8086":
+            checks.append(("ok", "Waydroid renders on the Intel GPU %s (%s): the tested configuration" % (wgpu["node"], wgpu["driver"])))
+        else:
+            checks.append(("soft", "Waydroid renders on the %s GPU (%s). This release's Vulkan shim falls back to the "
+                                   "Intel driver for apps that must not use NVIDIA, so only Intel + NVIDIA is supported "
+                                   "(--force overrides, at your own risk: those apps' Vulkan will fail)" % (wgpu["name"], wgpu["driver"])))
+
+    icd = find_icd()
+    if icd:
+        checks.append(("ok", "NVIDIA Vulkan ICD found: %s" % icd))
+    else:
+        checks.append(("fail", "no nvidia_icd.json in the Vulkan ICD directories (install the NVIDIA driver's Vulkan files)"))
+
+    if nvidia and os.path.exists(nvidia["node"]) and ROOT == "/":
+        st = os.stat(nvidia["node"])
+        if not (st.st_mode & 0o006):
+            checks.append(("warn", "%s is mode %o group %s: the user running the Venus server must be in that group"
+                           % (nvidia["node"], st.st_mode & 0o777, st.st_gid)))
+    return nodes, checks, nvidia, icd
+
+
+def cmd_detect(a):
+    nodes, checks, nvidia, icd = run_detect(a.nvidia_node)
+    hard = [t for l, t in checks if l == "fail"]
+    soft = [t for l, t in checks if l == "soft"]
+    verdict = "supported" if not hard and not soft else ("unsupported (override possible)" if not hard else "not applicable")
+    if a.json:
+        print(json.dumps({"nodes": nodes, "checks": [{"level": l, "text": t} for l, t in checks],
+                          "verdict": verdict, "nvidia_node": nvidia and nvidia["node"], "icd": icd}, indent=2))
+    else:
+        print("Hybrid GPU mode: compatibility check\n")
+        print("GPU render nodes:")
+        wnode = waydroid_render_node()
+        for n in nodes:
+            note = "   <- Waydroid renders here" if n["node"] == wnode else ""
+            print("  %-20s %-7s driver=%s%s" % (n["node"], n["name"], n["driver"] or "-", note))
+        if not nodes:
+            print("  (none found)")
+        print()
+        tag = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "soft": "NOTE"}
+        for l, t in checks:
+            print("  [%s] %s" % (tag[l], t))
+        print()
+        if verdict == "supported":
+            print("RESULT: supported. This is the configuration the mode was developed and tested on.")
+        elif hard:
+            print("RESULT: not applicable on this machine. That is fine: GBOS works without it.")
+        else:
+            print("RESULT: not a tested configuration.")
+    return 0 if verdict == "supported" else 1
+
+
+# ------------------------------------------------------------------------------------------ file helpers
+class Files:
+    def __init__(self, dry):
+        self.dry = dry
+
+    def write(self, path, text, mode=None):
+        real = P(path)
+        old = open(real).read() if os.path.exists(real) else ""
+        if old == text:
+            return
+        if self.dry:
+            import difflib
+            sys.stdout.write("".join(difflib.unified_diff(old.splitlines(True), text.splitlines(True),
+                                                          "a" + path, "b" + path)))
+            return
+        d = os.path.dirname(real)
+        os.makedirs(d, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".gbos-gpu.")
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        if os.path.exists(real):
+            shutil.copystat(real, tmp)
+            try:
+                st = os.stat(real)
+                os.chown(tmp, st.st_uid, st.st_gid)
+            except PermissionError:
+                pass
+        elif mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, real)
+
+
+def strip_block(lines):
+    out, inside = [], False
+    for ln in lines:
+        if ln.strip() == BEGIN:
+            inside = True
+            continue
+        if inside:
+            if ln.strip() == END:
+                inside = False
+            continue
+        out.append(ln)
+    return out
+
+
+def block_lines(uid, node):
+    run = "/run/user/%d/waydroid-venus" % uid
+    rel = node.lstrip("/")
+    return [
+        BEGIN,
+        # `optional` on the socket directory: if the Venus service is not up when the container starts, Android
+        # still boots and Vulkan falls back to the Intel driver, instead of the container failing to start.
+        "lxc.mount.entry = %s dev/venus none rbind,create=dir,optional 0 0" % run,
+        "lxc.mount.entry = %s %s none bind,create=file,optional 0 0" % (node, rel),
+        "lxc.mount.entry = %s/guest/lib64/vulkan.virtio.so vendor/lib64/hw/vulkan.virtio.so none rbind,create=file 0 0" % LIB,
+        "lxc.mount.entry = %s/guest/lib64/vulkan.pastel.so vendor/lib64/hw/vulkan.pastel.so none rbind,create=file 0 0" % LIB,
+        "lxc.mount.entry = %s/guest/lib/vulkan.virtio.so vendor/lib/hw/vulkan.virtio.so none rbind,create=file 0 0" % LIB,
+        "lxc.mount.entry = %s/guest/vendor/bin/waydroid-init vendor/bin/waydroid-init none rbind,create=file 0 0" % LIB,
+        END,
+    ]
+
+
+# targets of mount entries that a hand-made hybrid setup also uses
+HAND_MADE = re.compile(r"dev/venus\b|vendor/lib64/hw/vulkan\.(virtio|pastel|nvidia)\.so|vendor/lib/hw/vulkan\.virtio\.so|vendor/bin/waydroid-init")
+
+
+def apply_nodes(files, uid, node, adopt):
+    path = NODES
+    lines = open(P(path)).read().splitlines()
+    base = strip_block(lines)
+    foreign = [ln for ln in base if ln.lstrip().startswith("lxc.mount.entry") and HAND_MADE.search(ln)]
+    if foreign:
+        if not adopt:
+            die("config_nodes already has hybrid-GPU lines that are not managed by gbos-gpu (a hand-made setup):\n  "
+                + "\n  ".join(foreign) + "\nRemove them yourself, or pass --adopt to let gbos-gpu take them over.")
+        base = [ln for ln in base if ln not in foreign]
+        # the hand-made setup also mounted the NVIDIA render node on its own
+        base = [ln for ln in base if not re.search(r"lxc\.mount\.entry\s*=\s*%s\s" % re.escape(node), ln)]
+    while base and not base[-1].strip():
+        base.pop()
+    files.write(path, "\n".join(base + block_lines(uid, node)) + "\n")
+
+
+def prop_get(lines, key):
+    for ln in lines:
+        if ln.startswith(key + "="):
+            return ln[len(key) + 1:]
+    return None
+
+
+def apply_props(files, state):
+    for path in PROPS:
+        if not os.path.isfile(P(path)):
+            continue
+        lines = open(P(path)).read().splitlines()
+        saved = state["props"].setdefault(path, {})
+        for key, val in PROP_SET.items():
+            cur = prop_get(lines, key)
+            if key not in saved:
+                saved[key] = cur                      # None = the key did not exist; equal to ours = adopted setup
+            if cur is None:
+                lines.append("%s=%s" % (key, val))
+            else:
+                lines = [("%s=%s" % (key, val)) if ln.startswith(key + "=") else ln for ln in lines]
+        files.write(path, "\n".join(lines) + "\n")
+
+
+def restore_props(files, state):
+    notes = []
+    for path, saved in state.get("props", {}).items():
+        if not os.path.isfile(P(path)):
+            continue
+        lines = open(P(path)).read().splitlines()
+        for key, orig in saved.items():
+            cur = prop_get(lines, key)
+            if cur != PROP_SET[key]:
+                continue                                # someone changed it since: leave their value
+            if orig is None or (orig == PROP_SET[key] and key != "ro.hardware.vulkan"):
+                lines = [ln for ln in lines if not ln.startswith(key + "=")]
+            elif orig == PROP_SET[key]:
+                notes.append("%s: ro.hardware.vulkan stays 'virtio' because that was already set when gbos-gpu "
+                             "took over; run `sudo waydroid upgrade -o` to let Waydroid regenerate it" % path)
+            else:
+                lines = [("%s=%s" % (key, orig)) if ln.startswith(key + "=") else ln for ln in lines]
+        files.write(path, "\n".join(lines) + "\n")
+    return notes
+
+
+def load_state():
+    try:
+        return json.load(open(P(STATE)))
+    except (OSError, ValueError):
+        return None
+
+
+def save_state(files, st):
+    files.write(STATE, json.dumps(st, indent=2) + "\n", 0o644)
+
+
+def need_root(a):
+    if ROOT == "/" and os.geteuid() != 0 and not getattr(a, "dry_run", False):
+        die("this needs root: sudo gbos-gpu %s ..." % a.cmd)
+
+
+# ------------------------------------------------------------------------------------------ commands
+def cmd_enable(a):
+    need_root(a)
+    files = Files(a.dry_run)
+    nodes, checks, nvidia, icd = run_detect(a.nvidia_node)
+    hard = [t for l, t in checks if l == "fail"]
+    soft = [t for l, t in checks if l == "soft"]
+    if hard:
+        die("this machine cannot use hybrid-GPU mode:\n  - " + "\n  - ".join(hard) + "\n(run `gbos-gpu detect` for details; GBOS works without this mode)")
+    if soft and not a.force:
+        die("not a tested configuration:\n  - " + "\n  - ".join(soft))
+    user = a.user or os.environ.get("SUDO_USER") or ""
+    if not user or user == "root":
+        die("which user runs the Venus server? pass --user NAME (the desktop user, not root)")
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        die("no such user: %s" % user)
+    stage = os.path.abspath(a.stage_dir)
+    missing = [f for f in STAGE if not os.path.isfile(os.path.join(stage, f))]
+    if missing:
+        die("stage directory %s is incomplete, missing: %s\n(build it with: gbos-install.py gpu-prepare)" % (stage, ", ".join(missing)))
+
+    state = load_state() or {"props": {}}
+    if not a.dry_run:
+        if ROOT == "/" and subprocess.run(["pgrep", "-f", "lxc-start.*waydroid"], capture_output=True).returncode == 0:
+            print("note: Waydroid is running; stop it (waydroid session stop) and start it again to apply.")
+        for rel, mode in STAGE.items():
+            dst = P(os.path.join(LIB, rel))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            tmp = dst + ".new"
+            shutil.copyfile(os.path.join(stage, rel), tmp)
+            os.chmod(tmp, mode)
+            os.replace(tmp, dst)
+        for d, _, fs in os.walk(P(LIB)):
+            if os.geteuid() == 0:
+                os.chown(d, 0, 0)
+                for f in fs:
+                    os.chown(os.path.join(d, f), 0, 0)
+            os.chmod(d, 0o755)
+        files.write(os.path.join(LIB, "gpu.conf"), "NODE=%s\nICD=%s\nUSER=%s\n" % (nvidia["node"], icd, user), 0o644)
+    apply_nodes(files, pw.pw_uid, nvidia["node"], a.adopt)
+    apply_props(files, state)
+    udir = os.path.join(pw.pw_dir, ".config/systemd/user")
+    state.update({"user": user, "uid": pw.pw_uid, "node": nvidia["node"], "icd": icd, "time": int(time.time()),
+                  "unit": os.path.join(udir, UNIT)})
+    save_state(files, state)
+
+    unit_text = open(os.path.join(stage, UNIT)).read().replace("@GPULIB@", LIB)
+    if a.dry_run:
+        print("(dry run) would write %s/%s" % (udir, UNIT))
+    else:
+        real_udir = P(udir)
+        os.makedirs(real_udir, exist_ok=True)
+        files.write(os.path.join(udir, UNIT), unit_text, 0o644)
+        if os.geteuid() == 0:
+            for p in (real_udir, os.path.join(real_udir, UNIT)):
+                os.chown(p, pw.pw_uid, pw.pw_gid)
+    print("""
+Hybrid GPU mode is configured (NVIDIA node %s, user %s).
+
+Next, as %s (not root):
+    systemctl --user daemon-reload
+    systemctl --user enable --now gbos-venus.service
+then restart Waydroid:  waydroid session stop  &&  waydroid session start
+Check it:  gbos-gpu status
+Undo it:   sudo gbos-gpu disable""" % (nvidia["node"], user, user))
+    return 0
+
+
+def cmd_apply(a):
+    need_root(a)
+    st = load_state()
+    if not st:
+        die("hybrid-GPU mode is not enabled (no state file); run `gbos-gpu enable` first")
+    files = Files(a.dry_run)
+    apply_nodes(files, st["uid"], st["node"], adopt=True)
+    apply_props(files, st)
+    save_state(files, st)
+    print("re-applied. Restart Waydroid to take effect.")
+    return 0
+
+
+def cmd_disable(a):
+    need_root(a)
+    files = Files(a.dry_run)
+    st = load_state()
+    if os.path.isfile(P(NODES)):
+        lines = open(P(NODES)).read().splitlines()
+        files.write(NODES, "\n".join(strip_block(lines)).rstrip("\n") + "\n")
+    notes = []
+    if st:
+        notes = restore_props(files, st)
+        if not a.dry_run:
+            unit = P(st.get("unit", ""))
+            if st.get("unit") and os.path.exists(unit):
+                os.unlink(unit)
+            if os.path.exists(P(STATE)):
+                os.unlink(P(STATE))
+    if a.purge and not a.dry_run and os.path.isdir(P(LIB)):
+        shutil.rmtree(P(LIB))
+    for n in notes:
+        print("note: " + n)
+    print("""Hybrid GPU mode removed from Waydroid's configuration.
+Now, as the desktop user:   systemctl --user disable --now gbos-venus.service
+and restart Waydroid:       waydroid session stop  &&  waydroid session start
+%s""" % ("" if a.purge else "(The installed files in %s were kept; add --purge to delete them.)" % LIB))
+    return 0
+
+
+def cmd_status(a):
+    st = load_state()
+    print("hybrid GPU mode: %s" % ("configured" if st else "not enabled"))
+    if not st:
+        print("(run `gbos-gpu detect` to see whether this machine could use it)")
+        return 0
+    lines = open(P(NODES)).read().splitlines() if os.path.isfile(P(NODES)) else []
+    present = BEGIN in [ln.strip() for ln in lines]
+    print("  NVIDIA node        %s" % st["node"])
+    print("  user               %s" % st["user"])
+    print("  files in %-12s %s" % (LIB, "present" if os.path.isdir(P(LIB)) else "MISSING"))
+    print("  config_nodes block %s" % ("present" if present else "MISSING: Waydroid rewrote it; run: sudo gbos-gpu apply"))
+    for path in PROPS:
+        if os.path.isfile(P(path)):
+            cur = prop_get(open(P(path)).read().splitlines(), "ro.hardware.vulkan")
+            print("  %-34s ro.hardware.vulkan=%s%s" % (path, cur, "" if cur == "virtio" else "   <- not applied; run: sudo gbos-gpu apply"))
+    sock = "/run/user/%d/waydroid-venus/venus.sock" % st["uid"]
+    print("  Venus socket       %s" % ("present" if os.path.exists(P(sock)) else "absent (is gbos-venus.service running?)"))
+    return 0
+
+
+def main():
+    global ROOT
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default="/", help=argparse.SUPPRESS)       # tests: treat DIR as the filesystem root
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("detect")
+    d.add_argument("--json", action="store_true")
+    d.add_argument("--nvidia-node")
+    d.set_defaults(fn=cmd_detect)
+    e = sub.add_parser("enable")
+    e.add_argument("--stage-dir", required=True)
+    e.add_argument("--user")
+    e.add_argument("--nvidia-node")
+    e.add_argument("--force", action="store_true", help="allow an untested (non-Intel) iGPU")
+    e.add_argument("--adopt", action="store_true", help="take over hand-made hybrid-GPU lines in config_nodes")
+    e.add_argument("--dry-run", action="store_true")
+    e.set_defaults(fn=cmd_enable)
+    ap2 = sub.add_parser("apply")
+    ap2.add_argument("--dry-run", action="store_true")
+    ap2.set_defaults(fn=cmd_apply)
+    x = sub.add_parser("disable")
+    x.add_argument("--purge", action="store_true")
+    x.add_argument("--dry-run", action="store_true")
+    x.set_defaults(fn=cmd_disable)
+    s = sub.add_parser("status")
+    s.set_defaults(fn=cmd_status)
+    a = ap.parse_args()
+    ROOT = os.path.abspath(a.root)
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

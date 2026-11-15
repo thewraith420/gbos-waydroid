@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.gbos.overlay.wifi"
+    android:versionCode="1"
+    android:versionName="1.0">
+    <!-- Static, always-on runtime resource overlay for the Wi-Fi module's resources (bare metal, no vendor IWifi HAL). -->
+    <overlay android:targetPackage="com.google.android.wifi.resources"
+        android:targetName="WifiCustomization"
+        android:isStatic="true"
+        android:priority="100" />
+    <application android:hasCode="false" android:label="GBOS Wi-Fi overlay" />
+</manifest>

@@ -1,0 +1,7 @@
+# Disabled: 32-bit binary cannot execute on this 64-bit-only system
+service vendor.media.omx /system/bin/true
+    class main
+    user mediacodec
+    oneshot
+    disabled
+

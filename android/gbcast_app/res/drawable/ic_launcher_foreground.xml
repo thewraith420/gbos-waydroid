@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A little phone beaming waves at the Googlebook, coloured entirely from the Material You palette. Everything sits inside the 66 dp adaptive safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:rotation="-8" android:pivotX="47" android:pivotY="58">
+        <!-- body -->
+        <path android:fillColor="@android:color/system_neutral1_10"
+            android:pathData="M38,34 H56 A6,6 0 0 1 62,40 V76 A6,6 0 0 1 56,82 H38 A6,6 0 0 1 32,76 V40 A6,6 0 0 1 38,34 Z" />
+        <!-- screen -->
+        <path android:pathData="M38.5,38 H55.5 A3.5,3.5 0 0 1 59,41.5 V74.5 A3.5,3.5 0 0 1 55.5,78 H38.5 A3.5,3.5 0 0 1 35,74.5 V41.5 A3.5,3.5 0 0 1 38.5,38 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="35" android:startY="38"
+                    android:endX="59" android:endY="78">
+                    <item android:offset="0" android:color="@android:color/system_accent1_200" />
+                    <item android:offset="1" android:color="@android:color/system_accent3_200" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+    <!-- cast waves -->
+    <path android:strokeColor="@android:color/system_accent2_100" android:strokeWidth="2.8" android:strokeLineCap="round"
+        android:pathData="M64,34 A6,6 0 0 1 70,40" />
+    <path android:strokeColor="@android:color/system_accent2_100" android:strokeWidth="2.8" android:strokeLineCap="round"
+        android:pathData="M64,29 A11,11 0 0 1 75,40" />
+    <path android:strokeColor="@android:color/system_accent2_100" android:strokeWidth="2.8" android:strokeLineCap="round"
+        android:pathData="M64,24 A16,16 0 0 1 80,40" />
+</vector>

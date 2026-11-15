@@ -1,0 +1,56 @@
+# 2026 3 37 1 0 # 26q3 sdk/api level 37.1 - Android 17 QPR1 (header parsed by netbpfload: "# y q a b c #")
+# Googlebook OS on Waydroid: replacement for /system/etc/init/netbpfload.rc.
+#
+# Googlebook's Android 17 netbpfload (in the signed tethering APEX) rejects non-LTS kernels
+# and treats the container's read-only /proc/sys as fatal. Run WayDroid-ATV's Android 16
+# netbpfload (/system/bin/netbpfload-wd, private libs via RUNPATH) instead; it accepts
+# ro.bpf.kver_override (set in zzz-googlebook-waydroid.rc) and tolerates read-only sysctls.
+# It still loads the BPF programs shipped in Googlebook's own APEXes.
+
+on load-bpf-programs
+    write /proc/sys/kernel/kptr_restrict 1
+
+    # Load netd.o patched to accept the container's own network namespace (see
+    # patch-netd-bpf.py) instead of the APEX copy; the signed APEX itself is untouched.
+    mount none /system/etc/bpf-gb/netd.o /apex/com.android.tethering/etc/bpf/mainline/netd.o bind
+
+    # libservice-connectivity.so patched so the clat BPF SELinux-context check is non-fatal
+    # (this host has no SELinux; the check always aborts system_server otherwise). See
+    # patch-clat-selinux.py. Done here, before zygote forks, so system_server inherits the bind
+    # (same mechanism and mount namespace as the netd.o bind above, which reaches system_server).
+    mount none /system/etc/bpf-gb/libservice-connectivity.so /apex/com.android.tethering/lib64/libservice-connectivity.so bind
+
+    # libbluetooth_jni.so patched so its alarm timerfds use CLOCK_BOOTTIME instead of
+    # CLOCK_BOOTTIME_ALARM (no CAP_WAKE_ALARM in a container -> EPERM -> BT crash loop -> RescueParty
+    # reboot). Bound before zygote so the bluetooth app inherits it. See patch-bt-alarm.py.
+    mount none /system/etc/bpf-gb/libbluetooth_jni.so /apex/com.android.bt/lib64/libbluetooth_jni.so bind
+
+    # Synchronous; success sets bpf.progs_loaded=1.
+    exec_start bpfloader_wd
+
+    # Ensure bpf.progs_loaded is set even if platform bpfloader does not write the property
+    setprop bpf.progs_loaded 1
+
+    # Wait for bpf programs to be loaded before proceeding (hangs if the loader fails).
+    wait_for_prop bpf.progs_loaded 1
+
+    write /proc/sys/kernel/kptr_restrict 2
+
+    exec_start netd1shot
+    start netd
+
+service bpfloader_wd /system/bin/netbpfload-wd
+    disabled
+    capabilities CHOWN SYS_ADMIN NET_ADMIN SYSLOG
+    group root graphics network_stack net_admin net_bw_acct net_bw_stats net_raw system
+    user root
+    file /dev/kmsg w
+    rlimit memlock 1073741824 1073741824
+    oneshot
+
+# Kept so the tethering APEX's own .rc can still override it; it is no longer started.
+service bpfloader /system/bin/false
+    disabled
+    user root
+    oneshot
+    updatable

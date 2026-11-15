@@ -1,0 +1,30 @@
+# GBOS pinned inputs. The installer downloads each item, verifies sha256, and refuses to continue on a mismatch.
+# Nothing listed here is stored in this repository.
+# Format: name | url | bytes | sha256 | note
+
+googlebook_recovery | https://dl.google.com/device/recovery/ruby-user/16452207/recovery.zip | 7816442985 | 3c4dc7f636f29a1207e71d001fd2864aa20ce8354faecd2ef1ae47582b977f6c | Lenovo Googlebook 15 recovery, build 17.CL3B.260622.271.R1. Contains one 19069493760-byte android-desktop_signed_recovery_image.bin. Includes the Play Store and GMS, which are taken from the image.
+
+waydroid_atv_system | https://github.com/WayDroid-ATV/waydroid-builds/releases/download/20260717/lineage-23.2-20260717-VANILLA-waydroid_x86_64-system.zip | 1103813388 | 152e0f5c01cf10cc4c7ec93723c286308a06cb1334e6eeb4a4039cb345f97ae4 | Android 16 donor. Holds system.img (1417170944 bytes).
+
+waydroid_atv_vendor | https://github.com/WayDroid-ATV/waydroid-builds/releases/download/20260717/lineage-23.2-20260717-MAINLINE-waydroid_x86_64-vendor.zip | 210854104 | 28dfbd0e423dff6d5c7d2e34e15011fbaf4865da769d9923b84656d87e9f4d3c | Lineage 23.2 vendor, holds vendor.img.
+
+chromium_webview | https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64/1721545/chrome-android-desktop.zip | 500208792 | d1bc04228f07b708d95c39503bf12a4900807ce341429684889c2c7f48cf0424 | Upstream Chromium 158.0.8111.0. Use apks/SystemWebView.apk. Google-signed WebView builds (149, 155) hang JS fetch/XHR in this container.
+
+# OPTIONAL module (gpu/): hybrid GPU, Intel desktop + NVIDIA Vulkan via Venus. github.com/Shiro836/waydroid-nvidia v0.1.2, MIT with per-directory upstream licenses.
+# Only the host and guest archives are used (the project's third archive, 'prebuilts', is not needed).
+waydroid_nvidia_host | https://github.com/Shiro836/waydroid-nvidia/releases/download/v0.1.2/waydroid-nvidia-host-x86_64-v0.1.2.tar.zst | 1039006 | 6372d4f78ff4e9442e32a60d9b1ead11f238124f5acd57a92bbb4fd74c9d61e8 | confirmed against the release page
+waydroid_nvidia_guest | https://github.com/Shiro836/waydroid-nvidia/releases/download/v0.1.2/waydroid-nvidia-guest-android-x86_64-v0.1.2.tar.zst | 17067100 | c0a6ee7a69c6bc6075f7197d6c3cc2e213bf1b061b032f20da6f7441f8704574 | confirmed against the release page
+
+# Android app build toolchain (Maven). Verified byte-identical to the files the working APKs were built with.
+tool_aapt2 | https://dl.google.com/android/maven2/com/android/tools/build/aapt2/8.13.2-14304508/aapt2-8.13.2-14304508-linux.jar | 2815427 | 839609d6d776d6dd60a02aa577d97193ce3e650cf1deaabf062321e23bbd6bf6 | contains the aapt2 binary
+tool_apksig | https://dl.google.com/android/maven2/com/android/tools/build/apksig/8.13.2/apksig-8.13.2.jar | 506969 | c070ed1394629d74641aa0906f60b2ffa1ee77e6366a1f93437f59717b1aeb89 | APK signer library
+tool_r8 | https://dl.google.com/android/maven2/com/android/tools/r8/8.5.35/r8-8.5.35.jar | 16745967 | 4733945987ee0a840fafc34080b135259e01678412e07212b23f706334290294 | D8 dexer
+tool_android_all | https://repo1.maven.org/maven2/org/robolectric/android-all/16-robolectric-13921718/android-all-16-robolectric-13921718.jar | 196985634 | 8b74a0a137330658d2f33f0dc715d42734f74ba8b2d7014fc2e95aa40d3f682d | Android 16 API jar (compile-time only)
+# framework-res.apk is NOT downloaded: it is taken from the user's own Googlebook system_a (/system/framework/framework-res.apk).
+
+# Phone Hub host side. frida-server runs as root inside the container, so it is pinned and verified before use.
+# Verified: the decompressed binary is byte-identical to the one running in the working container.
+frida_server | https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-x86_64.xz | 44804056 | 44aead87103ab9738771e5eff659640fb6bf566fe83b8629444c1be99f87ce68 | decompresses to sha256 1c32715d6c00fb16a80cc5578625c0c194dbed12dd9d9623018e74c7764733c4
+
+# Native toolchain (only needed to rebuild input-bridge and vpd-stub; release assets ship prebuilts)
+android_ndk_r27c | https://dl.google.com/android/repository/android-ndk-r27c-linux.zip | 663987688 | 59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc | optional; sha1 090e8083a715fdb1a3e402d0763c388abb03fb4e; pinned from a download over TLS from dl.google.com, contents match the NDK that produced the verified builds

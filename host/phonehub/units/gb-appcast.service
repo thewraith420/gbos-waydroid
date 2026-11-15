@@ -1,0 +1,19 @@
+[Unit]
+Description=GBOS App Cast supervisor (waits for Waydroid/frida/CDS, then attaches and stays attached)
+# The keeper has to be up first: CDS is what the App Cast session attaches through, and appcast_up.sh
+# only takes the keeper's stand-down lock once CDS reports Connected.
+After=graphical-session.target gb-hub-link.service
+Wants=gb-hub-link.service
+
+[Service]
+Type=simple
+ExecStart=@PHONEHUB@/appcast_up.sh up
+# The supervisor forwards SIGTERM to the session as SIGINT, which is the only teardown measured not to
+# fault the unloaded agent. Give it a full minute to do that before systemd escalates.
+TimeoutStopSec=75
+KillMode=mixed
+Restart=on-failure
+RestartSec=20
+
+[Install]
+WantedBy=default.target

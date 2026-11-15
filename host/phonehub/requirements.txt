@@ -1,0 +1,10 @@
+# Python dependencies of the Phone Hub host side, pinned to the versions the working setup runs.
+# frida MUST match the frida-server pinned in sources.lock (17.24.3): the client refuses a mismatched server.
+# appcast_session.py reads the Java bridge shipped inside frida-tools, which is why the full set is needed.
+frida==17.24.3
+frida-tools==14.11.0
+colorama==0.4.6
+prompt_toolkit==3.0.53
+Pygments==2.21.0
+wcwidth==0.9.4
+websockets==13.1

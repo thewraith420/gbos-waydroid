@@ -1,0 +1,7 @@
+# Disabled: 32-bit binary cannot execute on this 64-bit-only system
+service vendor.cas-hal-1-2 /system/bin/true
+    class hal
+    user media
+    oneshot
+    disabled
+
