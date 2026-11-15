@@ -18,8 +18,11 @@ untested rather than unsupported.
 ## What GBOS needs from the PC
 
 * **Linux with a Wayland session.** Waydroid draws into a Wayland window.
-* **Waydroid installed and working** (it brings LXC with it) before you start. `try.sh` re-initialises it with the
-  GBOS images.
+* **Waydroid installed and working** (it brings LXC with it) before you start. This is a hard prerequisite: GBOS only
+  swaps the Googlebook Android image onto a Waydroid that already runs — it does **not** set up or patch Waydroid's
+  binder layer. On a distro whose stock kernel ships no binderfs (Debian, for one), that means the usual Waydroid binder
+  module (e.g. the anbox-modules DKMS) must already be in place; `gbos-install.py check` says so if it is missing.
+  `try.sh` re-initialises Waydroid with the GBOS images.
 * **x86-64, and a recent one.** The Googlebook image is x86-64 Android compiled for a recent CPU baseline, and there is no ARM
   host path. It uses these instruction sets **unconditionally in the first processes Android starts** (counted by
   disassembling the image's own binaries: `linker64` 24 GFNI / 38 VAES / 16 AVX-VNNI, `init` 27 / 38 / 14, `surfaceflinger`
@@ -44,14 +47,17 @@ untested rather than unsupported.
   see [kernel/README.md](../kernel/README.md)). It passes its QEMU tests and has booted GBOS to the desktop on one Pixel Slate (8th-gen Intel), but
   every emulated instruction costs a trap, so expect it to be slow (the first boot took ~10 minutes there). It also needs `kernel/gbos-secctx.py` on kernels without the AppArmor fix. `gbos-install.py check --ignore-cpu` downgrades the CPU check to a warning.
 * **Kernel features** (`installer/gbos-install.py check` reads them from `/proc/config.gz` or `/boot/config-*`):
-  binder and binderfs, `mac80211_hwsim` (virtual Wi-Fi), `uinput`, TUN, VETH, bridge, nftables, eBPF with
-  cgroup BPF, PSI, userfaultfd, SysV IPC. Optional: `ipvlan` (LAN presence), `bt vhci` (virtual Bluetooth), dummy.
-  Options built as modules must load (`binder_linux`, `mac80211_hwsim`, `uinput`, ...).
-* **Legacy iptables tables.** Android's `netd` uses the *legacy* iptables API, not nftables. Distribution kernels have
-  it; **a trimmed custom kernel may not**. Kernels since 6.12 hide the tables behind `NETFILTER_XTABLES_LEGACY`,
-  `IP_NF_IPTABLES_LEGACY` and `IP6_NF_IPTABLES_LEGACY`, so a config can have the base `ip_tables` module and none of the
-  `filter`/`nat`/`mangle`/`raw` tables. Without them Android boots but has no working network. `check` tests all eleven
-  options; `try.sh` loads the modules and persists that in `/etc/modules-load.d/`.
+  binder and binderfs (**supplied by your working Waydroid above — not by GBOS**), `mac80211_hwsim` (virtual Wi-Fi),
+  `uinput`, TUN, VETH, bridge, nftables, eBPF with cgroup BPF, PSI, userfaultfd, SysV IPC. Optional: `ipvlan` (LAN
+  presence), `bt vhci` (virtual Bluetooth), dummy. Options built as modules must load (`binder_linux`,
+  `mac80211_hwsim`, `uinput`, ...). A binder DKMS module provides binderfs without a `CONFIG_ANDROID_BINDERFS` in the
+  running kernel's own config, so `check` also accepts binderfs when it is registered at runtime.
+* **Legacy iptables tables.** Android's `netd` uses the *legacy* iptables API, not nftables. Distribution kernels
+  provide it — usually as loadable modules and often **without** exposing the newer `NETFILTER_XTABLES_LEGACY` config
+  symbol, so `check` treats a table as present when its module exists (`x_tables`, `ip_tables`, `iptable_filter`, ...),
+  not only when that symbol is set. **A trimmed custom kernel may genuinely lack the tables**, and then Android boots
+  with no working network: `kernel/gbos-netfilter-legacy.py` adds them as modules, or rebuild with the `kernel-fragment`
+  options. `try.sh` loads the modules and persists that in `/etc/modules-load.d/`.
 
 ### Building your own kernel for this
 

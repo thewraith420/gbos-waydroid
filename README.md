@@ -64,6 +64,10 @@ Then the rest of [docs/INSTALL.md](docs/INSTALL.md): bake the overlay, install t
 
 ## Read before installing
 
+* **A working Waydroid is a prerequisite.** GBOS replaces the Android *image* inside Waydroid; it does **not** install
+  or patch Waydroid's binder layer. If Waydroid doesn't already run on your machine, get it working first — on a distro
+  whose stock kernel ships no binderfs (e.g. Debian) that usually means the binder DKMS module a normal Waydroid setup
+  adds. `gbos-install.py check` flags it if binder/binderfs isn't there.
 * **It needs a recent CPU.** The image uses GFNI, VAES, VPCLMULQDQ, AVX-VNNI and SHA-NI in its first boot processes. It has been
   run on an Intel 13th-gen laptop; an Intel 8th-gen chip (a Pixel Slate) failed immediately. `gbos-install.py check` tells you before
   you download anything. See [HARDWARE](docs/HARDWARE.md).

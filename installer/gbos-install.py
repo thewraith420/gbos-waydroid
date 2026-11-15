@@ -252,6 +252,45 @@ def module_loaded(name):
     return os.path.isdir("/sys/module/" + name)
 
 
+def module_available(name):
+    """True if a kernel module (or built-in) by this name exists for the RUNNING kernel: already loaded, or present in
+    its module tree. No root needed. Lets a distro that ships a feature as modules satisfy a requirement whose CONFIG_*
+    symbol it does not expose (e.g. Debian provides working legacy iptables with no CONFIG_NETFILTER_XTABLES_LEGACY)."""
+    if module_loaded(name):
+        return True
+    try:
+        r = subprocess.run(["modinfo", "-F", "filename", name], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return False
+    return r.returncode == 0 and r.stdout.strip() != ""
+
+
+# legacy-netfilter CONFIG option -> the kernel module that proves it is actually present
+LEGACY_NET_MODULE = {"NETFILTER_XTABLES_LEGACY": "x_tables", "IP_NF_IPTABLES_LEGACY": "ip_tables", "IP6_NF_IPTABLES_LEGACY": "ip6_tables",
+                     "IP_NF_FILTER": "iptable_filter", "IP_NF_NAT": "iptable_nat", "IP_NF_MANGLE": "iptable_mangle", "IP_NF_RAW": "iptable_raw",
+                     "IP6_NF_FILTER": "ip6table_filter", "IP6_NF_NAT": "ip6table_nat", "IP6_NF_MANGLE": "ip6table_mangle", "IP6_NF_RAW": "ip6table_raw"}
+
+
+def legacy_net_ok(name, opts):
+    """Satisfied if the CONFIG is y/m, or the matching module simply exists on this kernel (Debian and other distros
+    provide working legacy iptables without the CONFIG_NETFILTER_XTABLES_LEGACY symbol the config check keys on)."""
+    if opts.get(name) in ("y", "m"):
+        return True
+    mod = LEGACY_NET_MODULE.get(name)
+    return bool(mod) and module_available(mod)
+
+
+def binderfs_available():
+    """True if binderfs is registered now: the loaded binder module provides it whatever the kernel's CONFIG says. This
+    is the ground truth for 'Waydroid's binder layer works here' (a binder DKMS module supplies binderfs with no
+    CONFIG_ANDROID_BINDERFS in the running kernel's own config)."""
+    try:
+        with open("/proc/filesystems") as f:
+            return any(line.rstrip().split("\t")[-1] in ("binder", "binderfs") for line in f)
+    except OSError:
+        return False
+
+
 def lsm_list():
     try:
         with open("/sys/kernel/security/lsm") as f:
@@ -299,7 +338,7 @@ def addons_plan(opts):
                          "Android's odsign then aborts in a loop and boot never gets past the boot animation", prob))
     if opts is not None:
         addon_dir = "/lib/modules/%s/updates/gbos-netfilter" % os.uname().release
-        if not os.path.isdir(addon_dir) and any(opts.get(n) not in ("y", "m") for n in LEGACY_NET):
+        if not os.path.isdir(addon_dir) and any(not legacy_net_ok(n, opts) for n in LEGACY_NET):
             prob = "x_tables is built into this kernel, so only a rebuild works (kernel-fragment)" if opts.get("NETFILTER_XTABLES") == "y" else ""
             plan.append(("netfilter", "gbos-netfilter-legacy.py", "the legacy iptables tables Android's netd needs are missing from this kernel", prob))
     return plan
@@ -428,17 +467,21 @@ def cmd_check(a):
     if opts is None:
         say("  cannot read /proc/config.gz or /boot/config-*; cannot verify (install the kernel config or load the 'configs' module)")
     else:
-        # The legacy iptables tables can come from the module add-on (kernel/gbos-netfilter-legacy.py) instead of the config.
+        # A legacy iptables table can come from the GBOS module add-on, or simply exist as a distro module even when the
+        # CONFIG_* symbol is absent (Debian), or from the config.
         addon_dir = "/lib/modules/%s/updates/gbos-netfilter" % os.uname().release
-        addon = {"NETFILTER_XTABLES_LEGACY": "x_tables", "IP_NF_IPTABLES_LEGACY": "ip_tables", "IP6_NF_IPTABLES_LEGACY": "ip6_tables",
-                 "IP_NF_FILTER": "iptable_filter", "IP_NF_NAT": "iptable_nat", "IP_NF_MANGLE": "iptable_mangle", "IP_NF_RAW": "iptable_raw",
-                 "IP6_NF_FILTER": "ip6table_filter", "IP6_NF_NAT": "ip6table_nat", "IP6_NF_MANGLE": "ip6table_mangle", "IP6_NF_RAW": "ip6table_raw"}
         satisfied = set()
         for name, required, why in KERNEL:
             v = opts.get(name)
             ok = v in ("y", "m")
-            if not ok and name in addon and os.path.isfile(os.path.join(addon_dir, addon[name] + ".ko")):
-                v, ok, why = "add-on", True, why + " (from the module add-on)"
+            if not ok and name == "ANDROID_BINDERFS" and binderfs_available():
+                v, ok = "runtime", True      # a binder DKMS module provides binderfs without the config symbol
+            if not ok and name in LEGACY_NET_MODULE:
+                mod = LEGACY_NET_MODULE[name]
+                if os.path.isfile(os.path.join(addon_dir, mod + ".ko")):
+                    v, ok, why = "add-on", True, why + " (from the module add-on)"
+                elif module_available(mod):
+                    v, ok, why = "module", True, why + " (module present on this kernel)"
             if ok:
                 satisfied.add(name)
             tag = "ok" if ok else ("MISSING" if required else "missing (optional)")
@@ -446,6 +489,14 @@ def cmd_check(a):
             if required and not ok:
                 bad += 1
         say("  note: options set to 'm' need their module to load (modprobe binder_linux, mac80211_hwsim, uinput ...).")
+        binder_ok = opts.get("ANDROID_BINDER_IPC") in ("y", "m")
+        binderfs_ok = opts.get("ANDROID_BINDERFS") in ("y", "m") or binderfs_available()
+        if not (binder_ok and binderfs_ok):
+            say("")
+            say("  binder / binderfs is what WAYDROID ITSELF needs, and is NOT something GBOS installs. If Waydroid already")
+            say("  runs on this machine you are set. If not, get Waydroid working first (a kernel with CONFIG_ANDROID_BINDERFS,")
+            say("  or the binder DKMS module a Waydroid-on-Debian/Ubuntu setup normally adds); GBOS only swaps the Googlebook")
+            say("  Android image onto a Waydroid that already works.")
         legacy = [n for n, req, _ in KERNEL if req and ("IPTABLES_LEGACY" in n or n.startswith(("IP_NF_", "IP6_NF_")) or n == "NETFILTER_XTABLES_LEGACY")
                   and n not in satisfied]
         if legacy:

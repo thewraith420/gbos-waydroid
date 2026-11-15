@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <asm/linkage.h>
+#include <linux/version.h>
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Answer binder's secid-0 security-context lookups on AppArmor-only kernels");
@@ -49,32 +50,64 @@ asm(".pushsection .text\n"
     ".size gbos_secctx_ret, .-gbos_secctx_ret\n"
     ".popsection\n");
 
-/* int apparmor_secid_to_secctx(u32 secid, struct lsm_context *cp) */
+/*
+ * The signature of apparmor_secid_to_secctx() changed in 6.14. Support both:
+ *   >= 6.14:  int apparmor_secid_to_secctx(u32 secid, struct lsm_context *cp)        -> returns the length
+ *   <  6.14:  int apparmor_secid_to_secctx(u32 secid, char **secdata, u32 *seclen)   -> returns 0 on success
+ * x86-64 args: secid=rdi; then (rsi) is cp, or (rsi, rdx) are (secdata, seclen).
+ */
 static int pre(struct kprobe *p, struct pt_regs *regs)
 {
 	u32 secid = (u32)regs->di;
-	struct lsm_context *cp = (struct lsm_context *)regs->si;
 	size_t len;
 
 	if (trace && printk_ratelimit())
-		pr_info("gbos_secctx: lookup secid=%u cp=%s by %s[%d]\n", secid, cp ? "yes" : "NULL", current->comm, task_pid_nr(current));
+		pr_info("gbos_secctx: lookup secid=%u by %s[%d]\n", secid, current->comm, task_pid_nr(current));
 	if (secid != 0)
 		return 0;			/* a real secid: let the original run */
 	len = strlen(context);
-	if (cp) {
-		char *s = kstrdup(context, GFP_ATOMIC);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+	{
+		struct lsm_context *cp = (struct lsm_context *)regs->si;
 
-		if (!s) {
-			regs->ax = (unsigned long)-ENOMEM;
+		if (cp) {
+			char *s = kstrdup(context, GFP_ATOMIC);
+
+			if (!s) {
+				regs->ax = (unsigned long)-ENOMEM;
+			} else {
+				cp->context = s;	/* freed by apparmor_release_secctx() -> kfree() */
+				cp->len = len;
+				cp->id = LSM_ID_APPARMOR;
+				regs->ax = len;
+			}
 		} else {
-			cp->context = s;	/* freed by apparmor_release_secctx() -> kfree() */
-			cp->len = len;
-			cp->id = LSM_ID_APPARMOR;
-			regs->ax = len;
+			regs->ax = len;			/* size query */
 		}
-	} else {
-		regs->ax = len;			/* size query */
 	}
+#else
+	{
+		char **secdata = (char **)regs->si;
+		u32 *seclen = (u32 *)regs->dx;
+
+		if (secdata) {
+			char *s = kstrdup(context, GFP_ATOMIC);
+
+			if (!s) {
+				regs->ax = (unsigned long)-ENOMEM;
+			} else {
+				*secdata = s;		/* freed by apparmor_release_secctx() -> kfree() */
+				if (seclen)
+					*seclen = len;
+				regs->ax = 0;		/* old API returns 0 on success */
+			}
+		} else {
+			if (seclen)
+				*seclen = len;		/* size query */
+			regs->ax = 0;
+		}
+	}
+#endif
 	atomic64_inc(&served);
 	regs->ip = (unsigned long)gbos_secctx_ret;
 	return 1;				/* registers changed: do not single-step the original instruction */
