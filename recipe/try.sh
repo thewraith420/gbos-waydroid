@@ -52,7 +52,7 @@ fi
 # Current experiment: WayDroid-ATV Android 16 init + waydroid-preinit (creates the container's
 # /dev nodes incl. loop-control for apexd) + init.waydroid.rc, with a private Android 16 library
 # set at /system/lib64/wdinit via RUNPATH; bionic libc/libm/libdl/libdl_android stay Googlebook's.
-command -v patchelf >/dev/null || apt-get install -y patchelf || exit 1
+command -v patchelf >/dev/null || { echo "error: patchelf is missing. Run installer/gbos-install.py check: it prints the command that installs every missing package." >&2; exit 1; }
 DONOR="$W/donor-a16"            # built by ./prep-donor.sh (BINS list lives there)
 STAGE="$W/stage-wdinit"
 rm -rf "$STAGE"; mkdir -p "$STAGE/lib" "$STAGE/bin" "$STAGE/sysext-bin"

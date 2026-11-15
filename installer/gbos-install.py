@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GBOS installer driver (bring your own image).
 
-    gbos-install.py check                                  preflight: tools, disk, kernel options, kernel add-ons this machine needs
+    gbos-install.py check [--json]                         preflight: tools, session, disk, kernel options, add-ons; prints one install command for missing packages
     gbos-install.py addons  --tree KERNEL_TREE --out DIR   build the kernel add-on modules THIS machine needs (no root, no reboot of a build)
     gbos-install.py fetch   --downloads DIR                download + verify every pinned input (resumable)
     gbos-install.py prepare --downloads DIR --work DIR     extract, patch and assemble the build folder
@@ -81,8 +81,12 @@ def die(msg):
     sys.exit("error: " + msg)
 
 
+_QUIET = False      # set by `check --json`: the text goes away, only the JSON is printed
+
+
 def say(msg):
-    print(msg, flush=True)
+    if not _QUIET:
+        print(msg, flush=True)
 
 
 def find_tool(name):
@@ -392,26 +396,102 @@ def cmd_addons(a):
     return 0 if len(built) == len(todo) and not [p for p in plan if p[3]] else 1
 
 
+# ---------------------------------------------------------------- check: structured report + install hints
+# Every line `check` prints is also recorded as an item, so `check --json` can feed a front-end (a future GUI) the same
+# result the text shows. status: ok | warn | fail | info.
+class Report:
+    def __init__(self):
+        self.items = []
+
+    def add(self, section, name, status, detail="", **extra):
+        it = {"section": section, "name": name, "status": status, "detail": detail}
+        it.update({k: v for k, v in extra.items() if v is not None})
+        self.items.append(it)
+
+
+# Host tools, by logical name -> package per package manager. None = part of the base system there / nothing to install.
+PKG = {
+    "apt":    {"erofs": "erofs-utils", "unzip": "unzip", "patchelf": "patchelf", "e2fsprogs": "e2fsprogs", "make": "make", "gcc": "gcc",
+               "jdk": "default-jdk-headless", "adb": "adb", "venv": "python3-venv", "curl": "curl", "xz": "xz-utils"},
+    "dnf":    {"erofs": "erofs-utils", "unzip": "unzip", "patchelf": "patchelf", "e2fsprogs": "e2fsprogs", "make": "make", "gcc": "gcc",
+               "jdk": "java-21-openjdk-devel", "adb": "android-tools", "venv": None, "curl": "curl", "xz": "xz"},
+    "pacman": {"erofs": "erofs-utils", "unzip": "unzip", "patchelf": "patchelf", "e2fsprogs": "e2fsprogs", "make": "make", "gcc": "gcc",
+               "jdk": "jdk-openjdk", "adb": "android-tools", "venv": None, "curl": "curl", "xz": "xz"},
+    "zypper": {"erofs": "erofs-utils", "unzip": "unzip", "patchelf": "patchelf", "e2fsprogs": "e2fsprogs", "make": "make", "gcc": "gcc",
+               "jdk": "java-21-openjdk-devel", "adb": "android-tools", "venv": None, "curl": "curl", "xz": "xz"},
+}
+PKG_INSTALL = {"apt": "sudo apt install", "dnf": "sudo dnf install", "pacman": "sudo pacman -S --needed", "zypper": "sudo zypper install"}
+
+# (command, logical package, needed for). "build" = needed to build/install GBOS at all; "phonehub" = only the Phone Hub part.
+HOST_TOOLS = [("fsck.erofs", "erofs", "build"), ("dump.erofs", "erofs", "build"), ("unzip", "unzip", "build"),
+              ("patchelf", "patchelf", "build"), ("debugfs", "e2fsprogs", "build"), ("e2fsck", "e2fsprogs", "build"),
+              ("resize2fs", "e2fsprogs", "build"), ("make", "make", "build"), ("gcc", "gcc", "build"),
+              ("javac", "jdk", "build"), ("keytool", "jdk", "build"),
+              ("adb", "adb", "phonehub"), ("curl", "curl", "phonehub"), ("xz", "xz", "phonehub")]
+
+
+def package_manager():
+    for pm, exe in (("apt", "apt-get"), ("dnf", "dnf"), ("pacman", "pacman"), ("zypper", "zypper")):
+        if find_tool(exe):
+            return pm
+    return None
+
+
+def pkg_name(pm, logical):
+    """The package that provides `logical` here; falls back to the Debian name when the package manager is unknown."""
+    return PKG.get(pm or "apt", PKG["apt"]).get(logical, logical)
+
+
+def has_venv():
+    """python3 -m venv works only with ensurepip (Debian/Ubuntu split it into python3-venv). host/install-host.sh needs it."""
+    import importlib.util
+    return importlib.util.find_spec("venv") is not None and importlib.util.find_spec("ensurepip") is not None
+
+
+def session_type():
+    """(type, how it was found). Under sudo the user's session variables are usually gone, so this can be unknown."""
+    t = os.environ.get("XDG_SESSION_TYPE")
+    if t:
+        return t, "XDG_SESSION_TYPE"
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland", "WAYLAND_DISPLAY"
+    if os.environ.get("DISPLAY"):
+        return "x11", "DISPLAY"
+    return None, ""
+
+
 def cmd_check(a):
+    global _QUIET
+    if a.json:
+        _QUIET = True
+    rep = Report()
     bad = 0
+    pm = package_manager()
+    missing_pkgs = {}           # package -> "build" | "phonehub"
+
     say("machine:")
     import platform
     arch = platform.machine()
     if arch in ("x86_64", "AMD64"):
         say("  cpu architecture   %s  ok" % arch)
+        rep.add("machine", "cpu architecture", "ok", arch)
     else:
         say("  cpu architecture   %s  FAIL: the Googlebook image is x86-64 Android and cannot run on this CPU" % arch)
+        rep.add("machine", "cpu architecture", "fail", "%s: the Googlebook image is x86-64 Android and cannot run on this CPU" % arch)
         bad += 1
     flags = cpu_flags()
     if flags is None:
         say("  cpu features       unknown (cannot read /proc/cpuinfo)")
+        rep.add("machine", "cpu features", "warn", "unknown (cannot read /proc/cpuinfo)")
     else:
         missing = [(f, why) for f, why in CPU_NEED if f not in flags]
         if not missing:
             say("  cpu features       ok (%s)" % " ".join(f for f, _ in CPU_NEED[:5]))
+            rep.add("machine", "cpu features", "ok", " ".join(f for f, _ in CPU_NEED[:5]))
         elif os.path.isdir("/sys/module/gbos_vexemu"):
             say("  cpu features       emulated: this CPU lacks %s; the gbos_vexemu module is loaded (slow, see kernel/README.md)"
                 % ", ".join(f for f, _ in missing))
+            rep.add("machine", "cpu features", "warn", "emulated by gbos_vexemu (slow)", missing=[f for f, _ in missing])
         else:
             level = "WARNING (--ignore-cpu)" if a.ignore_cpu else "FAIL"
             say("  cpu features       %s: this CPU lacks %s" % (level, ", ".join(f for f, _ in missing)))
@@ -420,6 +500,9 @@ def cmd_check(a):
             say("                     Intel 12th gen (Alder Lake) or newer is what it has been run on. See docs/HARDWARE.md.")
             say("                     Otherwise the instructions can be emulated by a loadable module, no kernel rebuild:")
             say("                     kernel/gbos-vexemu.py (slow; QEMU-tested, see kernel/README.md).")
+            rep.add("machine", "cpu features", "warn" if a.ignore_cpu else "fail",
+                    "this CPU lacks instructions the image uses in its first boot processes (SIGILL)",
+                    missing=[f for f, _ in missing], fix="kernel/gbos-vexemu.py (CPU emulation module, slow); see docs/HARDWARE.md")
             if not a.ignore_cpu:
                 bad += 1
     try:
@@ -428,22 +511,62 @@ def cmd_check(a):
         gib = kb / 2**20
         if gib >= 7:
             say("  memory             %.1f GiB  ok (developed on 7.6)" % gib)
+            rep.add("machine", "memory", "ok", "%.1f GiB" % gib)
         else:
             say("  memory             %.1f GiB  WARNING: developed on 7.6 GiB, which was already tight; Android's memory "
                 "killer will be aggressive and Phone Hub may be unusable" % gib)
+            rep.add("machine", "memory", "warn", "%.1f GiB: developed on 7.6 GiB, which was already tight" % gib)
     except (OSError, StopIteration, ValueError):
         say("  memory             unknown")
-    say("  /dev/kvm           %s" % ("present" if os.path.exists("/dev/kvm") else "absent (only the Linux Terminal VM needs it)"))
+        rep.add("machine", "memory", "warn", "unknown")
+    kvm = os.path.exists("/dev/kvm")
+    say("  /dev/kvm           %s" % ("present" if kvm else "absent (only the Linux Terminal VM needs it)"))
+    rep.add("machine", "/dev/kvm", "ok" if kvm else "info", "present" if kvm else "absent (only the Linux Terminal VM needs it)")
+    st, how = session_type()
+    if st == "wayland":
+        say("  session            wayland  ok")
+        rep.add("machine", "session", "ok", "wayland (%s)" % how)
+    elif st:
+        say("  session            %s  WARNING: Waydroid draws into a Wayland window; log in to a Wayland session to run it" % st)
+        rep.add("machine", "session", "warn", "%s: Waydroid needs a Wayland session" % st)
+    else:
+        say("  session            unknown (no session variables; normal under sudo or ssh). Waydroid needs a Wayland session.")
+        rep.add("machine", "session", "info", "unknown (no session variables; normal under sudo or ssh)")
+
     say("tools:")
-    for t, why in [("fsck.erofs", "erofs-utils"), ("dump.erofs", "erofs-utils"), ("unzip", "unzip"),
-                   ("patchelf", "patchelf"), ("debugfs", "e2fsprogs"), ("e2fsck", "e2fsprogs"),
-                   ("resize2fs", "e2fsprogs"), ("make", "make"), ("gcc", "gcc"), ("javac", "default-jdk-headless"),
-                   ("keytool", "default-jdk-headless"), ("waydroid", "waydroid"),
-                   ("adb", "adb; older releases: android-tools-adb (needed for the Phone Hub part)")]:
+    for t, logical, use in HOST_TOOLS:
         p = find_tool(t)
-        say("  %-10s %s" % (t, p or "MISSING  (package: %s)" % why))
-        if not p and t not in ("adb",):
+        pkg = pkg_name(pm, logical)
+        if p:
+            say("  %-10s %s" % (t, p))
+            rep.add("tools", t, "ok", p)
+            continue
+        hint = "%s, needed for the Phone Hub part" % pkg if use == "phonehub" else pkg
+        say("  %-10s MISSING  (package: %s)" % (t, hint))
+        rep.add("tools", t, "warn" if use == "phonehub" else "fail", "missing", package=pkg, needed_for=use)
+        missing_pkgs.setdefault(pkg, use)
+        if use == "build":
             bad += 1
+    # python3-venv: host/install-host.sh builds the Phone Hub's Python environment with it (and then installs frida etc. itself)
+    if has_venv():
+        say("  %-10s ok" % "venv")
+        rep.add("tools", "python3 venv", "ok", sys.executable)
+    else:
+        vp = pkg_name(pm, "venv") or "python3-venv"
+        say("  %-10s MISSING  (package: %s, needed for the Phone Hub part)" % ("venv", vp))
+        rep.add("tools", "python3 venv", "warn", "missing: python3 -m venv cannot create environments", package=vp, needed_for="phonehub")
+        missing_pkgs.setdefault(vp, "phonehub")
+    # Waydroid is a prerequisite: installing the package is not enough, it has to be set up and working, so it is never
+    # part of the install command below.
+    wp = find_tool("waydroid")
+    if wp:
+        say("  %-10s %s" % ("waydroid", wp))
+        rep.add("tools", "waydroid", "ok", wp)
+    else:
+        say("  %-10s MISSING  (prerequisite: install and set up Waydroid first, https://docs.waydro.id)" % "waydroid")
+        rep.add("tools", "waydroid", "fail", "missing: a working Waydroid is a prerequisite", fix="https://docs.waydro.id")
+        bad += 1
+
     for d, gib in [(a.downloads, NEED_DOWNLOAD_GIB), (a.work, NEED_WORK_GIB)]:
         if d:
             probe = d
@@ -452,6 +575,7 @@ def cmd_check(a):
             free = shutil.disk_usage(probe or "/").free / 2**30
             ok = free >= gib
             say("disk: %s has %.0f GiB free (need about %d)%s" % (d, free, gib, "" if ok else "  TOO LITTLE"))
+            rep.add("disk", d, "ok" if ok else "fail", "%.0f GiB free (need about %d)" % (free, gib), free_gib=round(free, 1), need_gib=gib)
             bad += 0 if ok else 1
     for d in (a.downloads, a.work):
         if d:
@@ -461,11 +585,14 @@ def cmd_check(a):
             r = subprocess.run(["findmnt", "-no", "FSTYPE", "-T", probe or "/"], stdout=subprocess.PIPE, text=True)
             if r.stdout.strip() in ("tmpfs", "ramfs"):
                 say("  %s is on %s, i.e. RAM. Pick a directory on disk." % (d, r.stdout.strip()))
+                rep.add("disk", d, "fail", "on %s, i.e. RAM. Pick a directory on disk." % r.stdout.strip())
                 bad += 1
+
     say("kernel %s:" % os.uname().release)
     opts = kernel_options()
     if opts is None:
         say("  cannot read /proc/config.gz or /boot/config-*; cannot verify (install the kernel config or load the 'configs' module)")
+        rep.add("kernel", "config", "warn", "cannot read /proc/config.gz or /boot/config-*; cannot verify")
     else:
         # A legacy iptables table can come from the GBOS module add-on, or simply exist as a distro module even when the
         # CONFIG_* symbol is absent (Debian), or from the config.
@@ -486,6 +613,7 @@ def cmd_check(a):
                 satisfied.add(name)
             tag = "ok" if ok else ("MISSING" if required else "missing (optional)")
             say("  %-18s %-3s %s  %s" % (name, v or "-", tag, why))
+            rep.add("kernel", name, "ok" if ok else ("fail" if required else "info"), why, value=v, required=required)
             if required and not ok:
                 bad += 1
         say("  note: options set to 'm' need their module to load (modprobe binder_linux, mac80211_hwsim, uinput ...).")
@@ -497,6 +625,8 @@ def cmd_check(a):
             say("  runs on this machine you are set. If not, get Waydroid working first (a kernel with CONFIG_ANDROID_BINDERFS,")
             say("  or the binder DKMS module a Waydroid-on-Debian/Ubuntu setup normally adds); GBOS only swaps the Googlebook")
             say("  Android image onto a Waydroid that already works.")
+            rep.add("kernel", "binder", "fail", "binder/binderfs is Waydroid's own prerequisite, not installed by GBOS: get Waydroid working first",
+                    fix="https://docs.waydro.id")
         legacy = [n for n, req, _ in KERNEL if req and ("IPTABLES_LEGACY" in n or n.startswith(("IP_NF_", "IP6_NF_")) or n == "NETFILTER_XTABLES_LEGACY")
                   and n not in satisfied]
         if legacy:
@@ -510,34 +640,64 @@ def cmd_check(a):
     plan = addons_plan(opts)
     lsm = lsm_list()
     say("  security modules   %s" % (",".join(lsm) if lsm else "unknown"))
+    rep.add("addons", "security modules", "info", ",".join(lsm) if lsm else "unknown")
     if lsm is not None and "apparmor" in lsm and "selinux" not in lsm:
         if module_loaded("gbos_secctx"):
             say("  binder context     ok: AppArmor-only kernel, gbos_secctx module loaded")
+            rep.add("addons", "binder context", "ok", "AppArmor-only kernel, gbos_secctx module loaded")
         elif kallsyms_has("apparmor_cred_getsecid"):
             say("  binder context     ok: this kernel has the AppArmor cred_getsecid fix")
+            rep.add("addons", "binder context", "ok", "this kernel has the AppArmor cred_getsecid fix")
         else:
             say("  binder context     WARNING: AppArmor is the only security module and the kernel lacks the cred_getsecid fix,")
             say("                     so binder cannot attach a caller security context: Android 17's odsign aborts in a loop and the")
             say("                     boot stops at the boot animation. Fix: kernel/gbos-secctx.py (module) or kernel/patches/")
             say("                     apparmor-cred-getsecid.patch (kernel rebuild). See docs/FIX-CATALOG.md entry 23.")
+            rep.add("addons", "binder context", "warn", "AppArmor-only kernel without the cred_getsecid fix: boot stops at the boot animation",
+                    fix="kernel/gbos-secctx.py")
     elif lsm is not None:
         say("  binder context     ok: SELinux is active, which provides it")
+        rep.add("addons", "binder context", "ok", "SELinux is active, which provides it")
     if plan:
         say("  needed here:       %s" % ", ".join(p[0] for p in plan))
         say("                     build them in one go:  gbos-install.py addons --tree <your kernel's build tree> --out ~/gbos/addons --build")
     elif opts is not None:
         say("  needed here:       none (or already installed)")
+    for key, script, why, prob in plan:
+        rep.add("addons", key, "warn", why, script="kernel/" + script, cannot_build=prob or None)
     home = os.path.expanduser("~" + os.environ.get("SUDO_USER", "")) if os.environ.get("SUDO_USER") else os.path.expanduser("~")
     wd = os.path.join(home, ".local/share/waydroid/data")
     if os.path.isdir(wd):
         say("  waydroid data      %s exists: try.sh will MOVE it aside (data.before-gbos-<time>, not deleted); the new Android must start on clean"
             % wd)
         say("                     data, or it keeps the old Android's user layout and shows only a bare wallpaper (docs/FIX-CATALOG.md entry 25).")
+        rep.add("waydroid", "existing data", "info", "%s exists: try.sh moves it aside (not deleted)" % wd, path=wd)
     say("")
     say("optional hybrid-GPU mode (Intel desktop + NVIDIA Vulkan): not part of the normal install; to see whether this")
     say("machine could use it, run  gpu/gbos-gpu detect")
+
+    # One command for every missing package. Printed, never run: installing system packages is left to you.
+    build_pkgs = sorted(p for p, u in missing_pkgs.items() if u == "build")
+    ph_pkgs = sorted(p for p, u in missing_pkgs.items() if u == "phonehub")
+    install = None
+    if missing_pkgs:
+        prefix = PKG_INSTALL.get(pm, "sudo apt install")
+        install = "%s %s" % (prefix, " ".join(build_pkgs + ph_pkgs))
+        say("")
+        say("install the missing packages%s:" % ("" if pm else " (package manager not recognised; these are the Debian/Ubuntu names)"))
+        say("    " + install)
+        if build_pkgs and ph_pkgs:
+            say("    (%s only needed for the Phone Hub part)" % ", ".join(ph_pkgs))
     say("")
     say("RESULT: %s" % ("ready" if not bad else "%d problem(s) above" % bad))
+    if a.json:
+        _QUIET = False
+        out = {"schema": 1, "result": "ready" if not bad else "problems", "problems": bad,
+               "kernel": os.uname().release, "package_manager": pm,
+               "missing_packages": {"build": build_pkgs, "phonehub": ph_pkgs}, "install_command": install,
+               "addons_needed": [{"key": k, "script": "kernel/" + s, "why": w, "cannot_build": p or None} for k, s, w, p in plan],
+               "checks": rep.items}
+        print(json.dumps(out, indent=2))
     return 1 if bad else 0
 
 
@@ -995,6 +1155,7 @@ def main():
     c.add_argument("--downloads")
     c.add_argument("--work")
     c.add_argument("--ignore-cpu", action="store_true", help="only warn about missing CPU instruction sets (you are emulating them)")
+    c.add_argument("--json", action="store_true", help="print the result as JSON (for scripts and front-ends) instead of text")
     f = sub.add_parser("fetch", help="download and verify the pinned inputs")
     f.add_argument("--downloads", required=True)
     f.add_argument("--with-nvidia", action="store_true", help="also fetch the inputs of the OPTIONAL hybrid-GPU module (host + guest archives)")

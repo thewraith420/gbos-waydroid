@@ -16,9 +16,15 @@ D=~/gbos/dl;  W=~/gbos/work
 installer/gbos-install.py check --downloads $D --work $W
 ```
 
-It lists missing tools (with the package to install), free disk, whether your folders are RAM-backed, and which kernel
-options are present. Fix everything it marks `MISSING` / `FAIL` before going on. adb is a prerequisite you set up
-yourself: [TUTORIAL-adb.md](TUTORIAL-adb.md).
+It lists missing tools, your session type (Waydroid needs Wayland), free disk, whether your folders are RAM-backed, and
+which kernel options are present. When packages are missing it ends with **one command that installs all of them** for
+your package manager (apt, dnf, pacman or zypper), e.g. `sudo apt install erofs-utils patchelf default-jdk-headless`;
+it prints that command but never runs it. Waydroid itself is never in it: it is a prerequisite you set up and get
+working first. Fix everything it marks `MISSING` / `FAIL` before going on. adb is a prerequisite you set up yourself:
+[TUTORIAL-adb.md](TUTORIAL-adb.md).
+
+`check --json` prints the same result as JSON (every check with its status, the missing packages split into "build"
+and "phonehub", the install command, and the kernel add-ons needed), for scripts and front-ends.
 
 ### Kernel add-ons (only if `check` says "needed here")
 
