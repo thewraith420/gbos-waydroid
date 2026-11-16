@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark theme (system dark mode). The light theme is in values/colors.xml; Android picks by the system's night mode. -->
+<resources>
+    <color name="widget_bg">#282a2e</color>
+    <color name="card_stroke">#3c4043</color>
+    <color name="btn_bg">#43464d</color>
+    <color name="accent">#a8c7fa</color>
+    <color name="on_accent">#062e6f</color>
+    <color name="btn_reconnect">@color/accent</color>
+    <color name="text_primary">#e3e3e3</color>
+    <color name="text_secondary">#c4c7c5</color>
+    <color name="status_green">#6dd58c</color>
+    <color name="status_orange">#f2b8b5</color>
+</resources>

@@ -42,7 +42,7 @@
         android:id="@+id/status_pixel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Pixel 7: Checking …"
+        android:text="Phone: Checking …"
         android:textColor="@color/text_primary"
         android:textSize="15sp"
         android:layout_marginBottom="8dp" />
@@ -62,7 +62,7 @@
         android:layout_height="52dp"
         android:text="Reconnect &amp; Fix Now"
         android:background="@drawable/btn_pill"
-        android:textColor="#062e6f"
+        android:textColor="@color/on_accent"
         android:textStyle="bold"
         android:textSize="16sp"
         android:layout_marginBottom="12dp" />
@@ -73,7 +73,7 @@
         android:layout_height="48dp"
         android:text="Open AppCast Window"
         android:background="@drawable/card_bg"
-        android:textColor="#a8c7fa"
+        android:textColor="@color/accent"
         android:textStyle="bold"
         android:textSize="15sp"
         android:layout_marginBottom="12dp" />
@@ -84,7 +84,7 @@
         android:layout_height="48dp"
         android:text="Pin Widget to Home Screen"
         android:background="@drawable/card_bg"
-        android:textColor="#a8c7fa"
+        android:textColor="@color/accent"
         android:textStyle="bold"
         android:textSize="15sp"
         android:layout_marginBottom="16dp" />

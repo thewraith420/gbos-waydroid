@@ -38,7 +38,7 @@ public class HubWidgetProvider extends AppWidgetProvider {
 
         if (ACTION_RECONNECT.equals(action)) {
             // Immediately set UI to "Reconnecting..."
-            RemoteViews views = buildViews(context, "Pixel 7 • Reconnecting …", "Running quick fix & gate kick …", false);
+            RemoteViews views = buildViews(context, "Phone • Reconnecting …", "Running quick fix & gate kick …", false);
             updateAllWidgets(context, views);
 
             new Thread(() -> {
@@ -59,7 +59,7 @@ public class HubWidgetProvider extends AppWidgetProvider {
 
     private static void refreshStatus(Context context) {
         String reply = sendDaemonCommand("STATUS");
-        String title = "Pixel 7 • Disconnected";
+        String title = "Phone • Disconnected";
         String sub = "Tap Reconnect to fix";
         boolean connected = false;
 
@@ -72,14 +72,14 @@ public class HubWidgetProvider extends AppWidgetProvider {
 
                 if ("connected".equalsIgnoreCase(cds)) {
                     connected = true;
-                    title = "Pixel 7 • Connected";
+                    title = "Phone • Connected";
                     if ("live".equalsIgnoreCase(appcast)) {
                         sub = "AppCast: Live (" + phone + ")";
                     } else {
                         sub = "AppCast: Ready (" + phone + ")";
                     }
                 } else {
-                    title = "Pixel 7 • Disconnected";
+                    title = "Phone • Disconnected";
                     sub = "CDS offline • Tap Reconnect";
                 }
             } catch (Exception ignored) {}
@@ -131,7 +131,7 @@ public class HubWidgetProvider extends AppWidgetProvider {
         if (custom != null) {
             manager.updateAppWidget(widgetId, custom);
         } else {
-            RemoteViews views = buildViews(context, "Pixel 7 • Checking …", "Contacting host link daemon …", false);
+            RemoteViews views = buildViews(context, "Phone • Checking …", "Contacting host link daemon …", false);
             manager.updateAppWidget(widgetId, views);
         }
     }

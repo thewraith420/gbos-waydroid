@@ -94,7 +94,7 @@ public class MainActivity extends Activity {
 
                         statusCds.setText("Cross-Device Services: " +
                                 ("connected".equalsIgnoreCase(cds) ? "✔ CONNECTED" : "✘ DISCONNECTED"));
-                        statusPixel.setText("Pixel 7: " + phone);
+                        statusPixel.setText("Phone: " + ("none".equals(phone) ? "not found" : phone));
                         statusAppcast.setText("AppCast Screen: " + appcast.toUpperCase());
                     } catch (Exception e) {
                         statusCds.setText("Error reading status: " + e.getMessage());
