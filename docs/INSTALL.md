@@ -10,6 +10,30 @@ must be on disk (not RAM-backed) with about 25 GB free between them.
 D=~/gbos/dl;  W=~/gbos/work
 ```
 
+### The graphical installer
+
+```sh
+installer/gbos-installer-gui.py          # as your normal user, from the checkout
+```
+
+It is a window with the steps below in a sidebar, one page each, and a button that runs the step. It runs **exactly the
+commands on this page**, prints each one in the step's output pane before running it, and keeps nothing secret.
+
+* **Root:** steps that need root ask for your password through the system's polkit dialog (`pkexec`), once per step.
+* **The reset:** the destructive step (step 3) asks you to type `reset` first.
+* **Missing packages:** the check page shows the command to install them, with a button that runs it.
+* **Kernel add-ons** are still a command-line step, because they need your kernel's source or headers.
+* **Saved state:** your folders, choices and finished steps are kept in `~/.config/gbos/installer.json`, so you can close
+  it and come back.
+
+It needs GTK 4 and libadwaita 1.5 or newer with their Python bindings. On Debian/Ubuntu install them with
+`sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`. Debian 13 and Ubuntu 24.04 or newer are recent enough. The
+command-line steps below need neither.
+
+**How tested it is:** the GUI is new. Its read-only pages (the check, the health check) and the way it passes your user
+to root have been tested. Its root steps run the same scripts as below, but nobody has yet clicked through a whole clean
+install with it. If a step fails, its output pane shows the command, so you can run it in a terminal instead.
+
 ## 1. Check the machine
 
 ```sh
@@ -107,7 +131,6 @@ This is the step to think about. `try.sh`:
 * runs **`waydroid init -f`**, which deletes Waydroid's writable overlay, and **moves your existing Android data aside** (`~/.local/share/waydroid/data` is renamed to `data.before-gbos-<time>`, not deleted: the new Android has to start on a clean `/data`);
 * edits `/var/lib/waydroid` (container config, properties) and installs a udev rule and a modules-load file for the
   legacy iptables modules, loading them now;
-* installs `patchelf` through `apt` if it is missing;
 * starts Waydroid and waits about three minutes for Android to boot, leaving logs in `W`.
 
 Do not run it on a Waydroid install you care about without a backup of `~/.local/share/waydroid`.

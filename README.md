@@ -66,6 +66,10 @@ cd ~/gbos/work && sudo ./try.sh                                              # D
 
 Then the rest of [docs/INSTALL.md](docs/INSTALL.md): bake the overlay, install the host services, set up adb, pair a phone.
 
+**Prefer a window?** `installer/gbos-installer-gui.py` walks through the same steps with buttons (GTK 4 / libadwaita). It
+runs exactly the commands in INSTALL.md, shows each one before running it, and asks for your password only for the steps
+that need root. See [INSTALL.md](docs/INSTALL.md#the-graphical-installer).
+
 ## Read before installing
 
 * **A working Waydroid is a prerequisite.** GBOS replaces the Android *image* inside Waydroid; it does **not** install
