@@ -7,15 +7,168 @@ Run the Android 17 "Googlebook" system image from a Lenovo Googlebook 15 recover
 affiliated with or endorsed by Google, Lenovo or the Waydroid project. "Googlebook", "Android", "Pixel" and
 "Chromium" belong to their owners.
 
-## Bring your own image
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/01-check-dark.png">
+  <img alt="The GBOS installer: a sidebar of eleven steps, with the machine check reporting Ready to install" src="assets/screenshots/01-check-light.png" width="860">
+</picture>
 
-This repository contains **no Google, Lenovo, Lineage or Chromium binaries.** The installer downloads each input
-from its original publisher, checks its sha256 against [`sources.lock`](sources.lock), and then patches **your own
-copies** with small scripts that assert the exact bytes they expect and stop on any mismatch. You are responsible for
-complying with the license terms of what you download. The code here is [MIT](LICENSE), except the kernel modules in
-[`kernel/`](kernel/README.md) (`vexemu/`, `secctx/`) and the patch in `kernel/patches/`, which are GPL-2.0 because they link
-against GPL-only kernel symbols; the CPU-emulation arithmetic is not in this repository at all (it is fetched at build time
-from a pinned upstream patch and checked by sha256).
+## Before you start
+
+* **Waydroid must already work on your machine**, binder included. GBOS replaces the Android image inside Waydroid; it
+  does not install Waydroid. Get stock Waydroid booting first.
+* **A recent CPU** (it has run on a 13th-gen Intel; an 8th-gen failed). The installer's first page tells you.
+* **About 25 GB of free disk**, on a real disk (not `/tmp` where that is RAM).
+* **Step 5 resets Waydroid.** Accounts and apps in your current Waydroid are removed (your old Android data is moved
+  aside, not deleted). Step 4 backs it all up first.
+
+The rest of the fine print is under [Read before installing](#read-before-installing).
+
+## Install with the installer
+
+Get the code and the installer's two libraries (GTK 4 and libadwaita; Debian 13, Ubuntu 24.04 and newer have recent
+enough versions), then start it as your normal user:
+
+```sh
+git clone https://github.com/thewraith420/gbos-waydroid.git && cd gbos-waydroid
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1     # Fedora: python3-gobject gtk4 libadwaita
+installer/gbos-installer-gui.py
+```
+
+Work down the sidebar. Each page explains its step and has one button. Every command the installer runs is printed in
+the page's **Output** pane first, so nothing happens out of sight. Steps that need root ask for your password in the
+normal system dialog. Close it whenever you like: it remembers where you were.
+
+### 1. Check this machine
+
+Pick a download folder and a work folder, then **Run the check**. It looks at your CPU, kernel, tools, disk and session
+and changes nothing. If packages are missing it shows one command for all of them: **Install** runs it (or **Copy** it to
+run yourself), then the check runs again. Carry on when it says **Ready to install**.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/01-check-missing-dark.png">
+  <img alt="The check page listing two missing packages with Copy and Install buttons" src="assets/screenshots/01-check-missing-light.png" width="760">
+</picture>
+
+If the check says a **kernel add-on** is needed, that one is a terminal step:
+[INSTALL.md, kernel add-ons](docs/INSTALL.md#kernel-add-ons-only-if-check-says-needed-here).
+
+### 2. Download
+
+About 10 GB from the original publishers (Google's recovery image, the Waydroid Android 16 images, an upstream WebView,
+the Android build tools). Every file is checked against its published checksum. You can stop and start again: it
+resumes. Leave the **prebuilt** option on unless you want to build two small helper programs yourself.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/02-download-dark.png">
+  <img alt="The download page after a finished download, every file verified" src="assets/screenshots/02-download-light.png" width="760">
+</picture>
+
+### 3. Prepare
+
+Unpacks the Googlebook image, patches what needs patching and builds the small apps, all inside the work folder
+(about a minute). Leave **Phone Hub** on if you want to link a phone.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/03-prepare-dark.png">
+  <img alt="The prepare page with the build output ending in work folder ready" src="assets/screenshots/03-prepare-light.png" width="760">
+</picture>
+
+### 4. Back up (optional)
+
+If your current Waydroid holds anything you want to keep, **Back up** saves it and checks the copy. Nothing to keep?
+**Nothing to keep: skip**.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/04-backup-dark.png">
+  <img alt="The backup page after a verified backup" src="assets/screenshots/04-backup-light.png" width="760">
+</picture>
+
+### 5. Build and reset Waydroid
+
+The big one, and the only destructive step. It builds the GBOS system image, resets Waydroid onto it, and starts
+Android for the first time (a few minutes). It asks you to type **reset** before it does anything.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/05-build-confirm-dark.png">
+  <img alt="The Reset Waydroid confirmation, with reset typed into the box" src="assets/screenshots/05-build-confirm-light.png" width="760">
+</picture>
+
+### 6. Bake the overlay
+
+Installs everything that makes GBOS work on top of the image: the WebView, services, boot scripts, apps and the Phone
+Hub widget. It never touches your data, and it is also how updates are applied later. **The first boot afterwards is
+slow**; give it several minutes.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/06-bake-dark.png">
+  <img alt="The bake page with the overlay written and Waydroid starting" src="assets/screenshots/06-bake-light.png" width="760">
+</picture>
+
+### 7. Host services
+
+Gives Android Wi-Fi and a presence on your network (Phone Hub needs both) and, with Phone Hub on, installs its services
+on your PC. Switch on **Share the Bluetooth adapter** if you want Android to use your PC's Bluetooth.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/07-host-dark.png">
+  <img alt="The host services page with the Bluetooth option" src="assets/screenshots/07-host-light.png" width="760">
+</picture>
+
+### 8. Main user
+
+Once GBOS has reached its desktop for the first time, **Set the main user** (Google services expect it). GBOS restarts
+and shows a user picker with one user, **Owner**: click it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/08-mainuser-dark.png">
+  <img alt="The main user page, ready" src="assets/screenshots/08-mainuser-light.png" width="760">
+</picture>
+
+### 9. Sign in
+
+In GBOS, sign in with the Google account **you use on your phone**, from the **Finish Googlebook setup** notification
+(or Settings, Add account). Sign-in pages are slow; give each up to a minute. Then **Apply Phone Hub settings**.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/09-signin-dark.png">
+  <img alt="The sign-in page after the Phone Hub settings were applied" src="assets/screenshots/09-signin-light.png" width="760">
+</picture>
+
+### 10. Pair your phone
+
+Install the companion app on your phone, turn on Cross-device services there, and scan the QR code GBOS shows. The page
+lists each step. Then put the **Phone Hub widget** on the GBOS desktop to see the link and reconnect it in one click.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/10-phone-dark.png">
+  <img alt="The pair-your-phone page listing the steps" src="assets/screenshots/10-phone-light.png" width="760">
+</picture>
+
+### 11. Health check
+
+A read-only check of the whole install. Anything it flags comes with the command that fixes it. Run it whenever
+something seems off. **Start GBOS** opens it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/11-doctor-dark.png">
+  <img alt="The health check reporting nothing broken" src="assets/screenshots/11-doctor-light.png" width="760">
+</picture>
+
+The screenshots are the real installer, showing output from a real install on the developer's machine (home folders
+renamed).
+
+## Install from the command line
+
+Everything the installer does is a documented command. The same install by hand:
+
+```sh
+installer/gbos-install.py check   --downloads ~/gbos/dl --work ~/gbos/work
+installer/gbos-install.py fetch   --downloads ~/gbos/dl --with-ndk          # about 10 GB, resumable, sha256-checked
+installer/gbos-install.py prepare --downloads ~/gbos/dl --work ~/gbos/work --ndk auto --phone-hub
+cd ~/gbos/work && sudo ./try.sh                                              # DESTRUCTIVE, read INSTALL first
+```
+
+Then the rest of [docs/INSTALL.md](docs/INSTALL.md): bake the overlay, install the host services, set up adb, pair a phone.
 
 ## What works
 
@@ -48,27 +201,15 @@ feeds GBOS's own streaming window. See [ARCHITECTURE](docs/ARCHITECTURE.md).
   → `gb-userfixes.sh`, ending with `gbos-doctor.py` at 0 broken. **Pairing a phone and App Cast have not yet been
   re-tested from a clean install** (they work on the developer's long-running install). The optional GPU mode was not
   part of the run.
+* **The graphical installer is new.** Its read-only pages are tested, and every root step runs the same scripts as the
+  command line, but no one has clicked through a whole clean install with it yet. If a step fails, its Output pane shows
+  the command, so you can run it in a terminal.
 * Only tested on one machine (a 13th-gen Intel laptop with an NVIDIA hybrid GPU). Reports from other hardware are welcome.
 
 The prebuilt Android binaries (`input-bridge`, `vpd-stub`, the optional GPU shim) are attached to each
 [release](https://github.com/thewraith420/gbos-waydroid/releases) and checked against [`prebuilt.sha256`](prebuilt.sha256)
 on download. If you'd rather not trust them, build them yourself with the Android NDK, which the installer can fetch for you.
 The build is reproducible, so your build should match the published checksums.
-
-## Quick path
-
-```sh
-installer/gbos-install.py check   --downloads ~/gbos/dl --work ~/gbos/work
-installer/gbos-install.py fetch   --downloads ~/gbos/dl --with-ndk          # about 10 GB, resumable, sha256-checked
-installer/gbos-install.py prepare --downloads ~/gbos/dl --work ~/gbos/work --ndk auto --phone-hub
-cd ~/gbos/work && sudo ./try.sh                                              # DESTRUCTIVE, read INSTALL first
-```
-
-Then the rest of [docs/INSTALL.md](docs/INSTALL.md): bake the overlay, install the host services, set up adb, pair a phone.
-
-**Prefer a window?** `installer/gbos-installer-gui.py` walks through the same steps with buttons (GTK 4 / libadwaita). It
-runs exactly the commands in INSTALL.md, shows each one before running it, and asks for your password only for the steps
-that need root. See [INSTALL.md](docs/INSTALL.md#the-graphical-installer).
 
 ## Read before installing
 
@@ -89,15 +230,26 @@ that need root. See [INSTALL.md](docs/INSTALL.md#the-graphical-installer).
 * Scratch space: allow about **25 GB** free. Do not point the installer at a RAM-backed directory such as `/tmp` on
   systems where that is tmpfs; `check` warns about it.
 
+## Bring your own image
+
+This repository contains **no Google, Lenovo, Lineage or Chromium binaries.** The installer downloads each input
+from its original publisher, checks its sha256 against [`sources.lock`](sources.lock), and then patches **your own
+copies** with small scripts that assert the exact bytes they expect and stop on any mismatch. You are responsible for
+complying with the license terms of what you download. The code here is [MIT](LICENSE), except the kernel modules in
+[`kernel/`](kernel/README.md) (`vexemu/`, `secctx/`) and the patch in `kernel/patches/`, which are GPL-2.0 because they link
+against GPL-only kernel symbols; the CPU-emulation arithmetic is not in this repository at all (it is fetched at build time
+from a pinned upstream patch and checked by sha256).
+
 ## Layout
 
 | Path | What it is |
 |---|---|
-| [`installer/`](installer) | `gbos-install.py` (check / fetch / prepare), `extract_recovery.py` (reads the recovery image), `derive_patched.py` (builds the nine patched libraries from your image), **`gbos-backup.py`** (back up / restore Waydroid and its data), **`gbos-doctor.py`** (read-only health check) |
+| [`installer/`](installer) | **`gbos-installer-gui.py`** (the graphical installer), `gbos-install.py` (check / fetch / prepare), `extract_recovery.py` (reads the recovery image), `derive_patched.py` (builds the nine patched libraries from your image), **`gbos-backup.py`** (back up / restore Waydroid and its data), **`gbos-doctor.py`** (read-only health check) |
 | [`recipe/`](recipe) | the scripts that build and install the system: `try.sh`, `bake-apps.sh`, the patch scripts, the in-container services. [`PATCHES.md`](recipe/PATCHES.md) says what every binary patch is and where its input comes from |
 | [`native/`](native) | C sources built into the container (input bridge, signin helper, stubs) |
 | [`android/`](android) | sources of the small Android apps (build and signing are done by the installer) |
 | [`host/`](host) | services on the PC: LAN, virtual Wi-Fi, Bluetooth bridge, and the Phone Hub / App Cast stack. [README](host/README.md) |
 | [`gpu/`](gpu) | **optional** Intel + NVIDIA hybrid-GPU mode. Most machines should skip it. [README](gpu/README.md) |
 | [`docs/`](docs) | [INSTALL](docs/INSTALL.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [HARDWARE](docs/HARDWARE.md), [TROUBLESHOOTING](docs/TROUBLESHOOTING.md), [FIRST-TRIAL](docs/FIRST-TRIAL.md) (a checklist for trying it on a machine that already runs Waydroid), [FIX-CATALOG](docs/FIX-CATALOG.md) (why each fix exists), [adb tutorial](docs/TUTORIAL-adb.md), [RELEASING](docs/RELEASING.md) |
+| [`assets/screenshots/`](assets/screenshots) | the README screenshots (rendered from the real installer, dark and light) |
 | [`tools/scrub.sh`](tools/scrub.sh) | run before any commit: fails if the tree contains keys, tokens, personal paths or third-party binaries |
