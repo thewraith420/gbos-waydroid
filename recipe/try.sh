@@ -395,6 +395,11 @@ sleep "${BOOT_WAIT:-180}"
 
 kill "$DMESG_PID" "$LOGCAT_PID" 2>/dev/null
 pkill -f "waydroid logcat" 2>/dev/null
+# A fresh /data trusts no adb key and has debugging off, so the "Allow USB debugging?" prompt never appears and every
+# Phone Hub script would fail with "unauthorized". Trust this user's key now (it waits for boot_completed itself).
+if [ -x "$W/gb-adb-authorize.sh" ]; then
+  "$W/gb-adb-authorize.sh" || echo "WARNING: adb authorization failed; run  sudo ./gb-adb-authorize.sh  once Android is up"
+fi
 cp /var/lib/waydroid/waydroid.log waydroid.log
 waydroid status > status.txt 2>&1
 chown "$U" dmesg.txt waydroid.log status.txt logcat.txt session.txt

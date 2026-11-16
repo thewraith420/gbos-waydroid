@@ -158,8 +158,13 @@ waydroid session stop && sudo waydroid container stop
 waydroid session start
 ```
 
-It refuses anything but the one layout it knows. Then, in GBOS: Settings, Add account, sign in with the Google account
-you use on your phone. (The setup wizard is disabled on purpose.)
+It refuses anything but the one layout it knows. After this restart GBOS shows a **user picker with one user, "Owner"**:
+click it to log in (that is the main user you just set).
+
+Then sign in with the Google account **you use on your phone** (Phone Hub only links a phone signed in to the same
+account). Either sign in in the "Android Setup" window that may open on the first boot, or use the **"Finish Googlebook
+setup"** notification; Settings → Add account works too. Only the sign-in step of the setup wizard runs here; the rest of
+the wizard is disabled on purpose (it needs a security chip this machine does not have).
 
 Three things that depend on your machine, all checked by `installer/gbos-doctor.py`:
 
@@ -193,8 +198,8 @@ Then:
 4. Start casting from the phone app (it finds your PC on its own), or open App Cast in GBOS.
 
 Status and repair: `~/.local/share/gbos/phonehub/appcast_up.sh status`, `gb-reconnect.sh`. See
-[TROUBLESHOOTING](TROUBLESHOOTING.md). This whole sequence has been checked piece by piece against the working system
-(the script's target state matches it exactly), but not yet run from a clean install.
+[TROUBLESHOOTING](TROUBLESHOOTING.md). Everything up to and including `gb-userfixes.sh` has been run on a clean install;
+the phone steps 1-4 have not yet been re-tested from one.
 
 ## 8. Optional: hybrid GPU
 

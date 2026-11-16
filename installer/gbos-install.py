@@ -1059,7 +1059,7 @@ def cmd_prepare(a):
     say("")
     say("work folder ready: %s" % W)
     say("next (as root, from that folder):  sudo ./try.sh   then   sudo ./bake-apps.sh")
-    say("then the host services:  host/install-host.sh phonehub --touch-jar %s/touch_injector/build/gb-touch.jar" % W)
+    say("then the host services:  host/install-host.sh phonehub --work %s" % W)
     say("                          sudo host/install-host.sh system lan wifi")
     return 0
 

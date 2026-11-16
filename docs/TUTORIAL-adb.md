@@ -19,10 +19,16 @@ adb devices
 
 You want to see `<address>:5555    device`.
 
-* `unauthorized`: the container has not accepted this PC's key yet. Look at the GBOS screen for an
-  "Allow USB debugging?" prompt and accept it (tick "always allow"), then run `adb devices` again.
-  *(Written from how adb behaves in general; the first-authorization step has not been walked through on a
-  clean install yet.)*
+* `unauthorized`: the container does not trust this PC's key. On a fresh install there is **no** "Allow USB
+  debugging?" prompt to accept: a fresh Android `/data` has debugging switched off, and Android only shows that prompt
+  while it is on. `try.sh` therefore trusts your key itself after the first boot. If it could not (adb was not
+  installed yet, or Android's data was reset later), run this from the work folder while Android is up:
+
+  ```sh
+  sudo ./gb-adb-authorize.sh      # writes ~/.android/adbkey.pub into the container and turns debugging on
+  ```
+
+  then `adb connect` again. (Verified on a clean install.)
 * `offline` or no entry: Android has not finished booting, or Waydroid is not running. Wait, or
   `waydroid session start`.
 * The address changes after a Waydroid restart. The services follow it automatically; for your own commands run

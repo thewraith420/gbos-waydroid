@@ -106,9 +106,12 @@ def is_ram_backed(path):
 
 
 def du(paths):
+    """Bytes actually allocated on disk. NOT the apparent size: Android's /data holds huge sparse files (the Linux
+    Terminal VM disk is ~950 GB apparent / ~17 GB used, gb-datadisk.img ~1 TB apparent / 0 used), and tar --sparse
+    only stores the allocated part, so the apparent size would refuse a backup that fits easily."""
     total = 0
     for p in paths:
-        r = subprocess.run(["du", "-sb", "--apparent-size", P(p)], capture_output=True, text=True)
+        r = subprocess.run(["du", "-s", "--block-size=1", P(p)], capture_output=True, text=True)
         try:
             total += int(r.stdout.split()[0])
         except (IndexError, ValueError):
