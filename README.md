@@ -48,9 +48,12 @@ feeds GBOS's own streaming window. See [ARCHITECTURE](docs/ARCHITECTURE.md).
   → `gb-userfixes.sh`, ending with `gbos-doctor.py` at 0 broken. **Pairing a phone and App Cast have not yet been
   re-tested from a clean install** (they work on the developer's long-running install). The optional GPU mode was not
   part of the run.
-* The prebuilt Android binaries (`input-bridge`, `vpd-stub`, the optional GPU shim) are not uploaded yet. Their checksums
-  are already committed ([`prebuilt.sha256`](prebuilt.sha256)); until a release exists, build them with the Android NDK,
-  which the installer can fetch for you. The build is reproducible.
+* Only tested on one machine (a 13th-gen Intel laptop with an NVIDIA hybrid GPU). Reports from other hardware are welcome.
+
+The prebuilt Android binaries (`input-bridge`, `vpd-stub`, the optional GPU shim) are attached to each
+[release](https://github.com/thewraith420/gbos-waydroid/releases) and checked against [`prebuilt.sha256`](prebuilt.sha256)
+on download. If you'd rather not trust them, build them yourself with the Android NDK, which the installer can fetch for you.
+The build is reproducible, so your build should match the published checksums.
 
 ## Quick path
 
