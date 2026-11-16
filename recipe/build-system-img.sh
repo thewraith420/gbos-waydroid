@@ -61,6 +61,28 @@ for rc in timberslide; do
   rm -f "root/system/etc/init/$rc.rc"
 done
 
+# No face-unlock feature. The image declares android.hardware.biometrics.face (the Googlebook has a face camera), so
+# system_server's FaceService registers face sensors at boot. On this userdebug build it always considers a "virtual"
+# test HAL as well and waits for it with ServiceManager.waitForService, which never returns because no such HAL exists:
+# a BiometricServiceRegistry thread stays blocked for good and asks servicemanager about once a second, which logs ~9
+# lines each time to /dev/kmsg, i.e. the HOST's kernel journal (about a million lines a day). Without the feature
+# declaration FaceService does not register sensors. There is no face hardware in the container anyway.
+rm -f root/product/etc/permissions/android.hardware.biometrics.face.xml
+
+# Drop service-context entries that system_ext repeats from the platform list (plat_service_contexts) verbatim. libselinux
+# prints "SELinux: Multiple same specifications for <service>" for each duplicate every time a service-context handle is
+# loaded (servicemanager reloads it on lookups), another flood into the host's kernel journal. Only exact duplicates of
+# a platform line are removed, so every service keeps exactly the context it had.
+SC=root/system_ext/etc/selinux/system_ext_service_contexts
+PLAT=root/system/etc/selinux/plat_service_contexts
+if [ -f "$SC" ] && [ -f "$PLAT" ]; then
+  before=$(wc -l < "$SC")
+  awk 'NR==FNR { if ($0 !~ /^[[:space:]]*(#|$)/) seen[$1" "$2]=1; next }
+       !($0 !~ /^[[:space:]]*(#|$)/ && (($1" "$2) in seen))' "$PLAT" "$SC" > "$SC.new"
+  cat "$SC.new" > "$SC"; rm -f "$SC.new"          # overwrite in place: keeps owner, mode and xattrs
+  echo "== system_ext_service_contexts: removed $((before - $(wc -l < "$SC"))) entries duplicated from the platform list"
+fi
+
 # Disable the setup wizard at the property level so a fresh boot heads for the launcher, not first-run.
 # WHY we can't just run setup: the Googlebook setup wizard BLOCKS waiting for the GSC (Google Security
 # Chip) HAL android.system.desktop.security.gsc.IGsc/default, which has no hardware in the container (we

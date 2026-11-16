@@ -359,6 +359,12 @@ for p in /var/lib/waydroid/waydroid_base.prop /var/lib/waydroid/waydroid.prop; d
   else printf 'ro.debuggable=1\n' >> "$p"; fi
   if grep -q '^ro.build.type=' "$p"; then sed -i 's/^ro.build.type=.*/ro.build.type=userdebug/' "$p"
   else printf 'ro.build.type=userdebug\n' >> "$p"; fi
+  # Codec2 on. On a desktop GPU (gralloc=gbm) Waydroid writes debug.stagefright.ccodec=0, which switches Codec2 off and leaves
+  # only the OMX codecs its usual LineageOS images bring. This image has no usable OMX (its OMX HAL is 32-bit only and is
+  # removed from the VINTF manifest by bake-apps.sh), so the codec list apps see would be EMPTY: no video or audio
+  # playback/recording through MediaCodec. 4 is Android's own default (Codec2 for everything). Verified: 96 codecs listed,
+  # YouTube plays through c2.ffmpeg.av1.decoder (hardware path) with sound.
+  sed -i 's/^debug.stagefright.ccodec=.*/debug.stagefright.ccodec=4/' "$p"
 done
 # `waydroid init` regenerated the container config above; put the settings Android 17 needs back (this function was
 # defined but never called, which a machine that already had these lines in its config hid).

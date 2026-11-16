@@ -32,6 +32,7 @@ obfuscated and change between versions.
 | Google sign-in: email accepted, **Next does nothing**; `fix-ui.out` shows `reading 'Ea'` | [26](#26-sign-in-next-never-reaches-the-password-screen-on-a-slow-machine-typeerror--reading-ea) |
 | Stuck at the boot animation / black screen; `odsign` aborts in a loop; kernel log: `failed to get security context` | [23](#23-boot-stops-at-the-boot-animation-odsign-aborts-failed-to-get-security-context) |
 | Fresh install: Wi-Fi on but never connects; `gb-fakeap.log` repeats `hostapd started`; `adb` stays `unauthorized` | [27](#27-fresh-install-no-wi-fi-and-adb-unauthorized) |
+| Apps cannot play video/audio (empty codec list, `MediaCodecList generated and serialized (56 bytes)`); host journal flooded with `SELinux: Multiple same specifications` / face `virtualhal` lines | [28](#28-fresh-install-no-codecs-for-apps-and-a-flood-in-the-host-journal) |
 
 ---
 
@@ -348,6 +349,35 @@ with "not reachable or not booted".
 *Fix:* `recipe/gb-adb-authorize.sh` writes the sudo user's `~/.android/adbkey.pub` into `/data/misc/adb/adb_keys` and sets `adb_enabled=1`;
 `try.sh` runs it after the first boot. Run `sudo ./gb-adb-authorize.sh` from the work folder after any other reset of Android's data.
 *Where:* `recipe/fakeap/gb-fakeap.sh`, `recipe/gb-adb-authorize.sh`, `recipe/try.sh`. *Status:* both verified on a clean install.
+
+### 28. Fresh install: no codecs for apps, and a flood in the host journal
+Found by reading the logs of the first clean install. The developer's install had hand-made fixes for all three in Waydroid's writable
+layer (`overlay_rw`), which `waydroid init -f` throws away; they had never been written into the recipe.
+
+*Symptom A:* apps find no video or audio codec at all (`MediaCodecList generated and serialized (56 bytes)`, i.e. an empty list).
+*Cause:* on a desktop GPU (gralloc `gbm`) Waydroid writes `debug.stagefright.ccodec=0` into `waydroid.prop`/`waydroid_base.prop`, which
+switches Codec2 off and leaves only OMX codecs. This image has no usable OMX (removed with the 32-bit OMX HAL, see the VINTF entry), so
+nothing is left. *Fix:* `try.sh` sets it to `4` (Android's default: Codec2 for everything) and `bake-apps.sh` links
+`/vendor/etc/media_codecs_c2.xml` to the vendor's software Codec2 list. Result: 96 codecs; YouTube plays through
+`c2.ffmpeg.av1.decoder` (hardware path) with sound. `gbos-doctor.py` fails if `ccodec=0` comes back (`waydroid init` or an upgrade
+rewrites the prop files).
+
+*Symptom B:* the host's kernel journal (`journalctl -k`) grows by roughly 800 lines a minute at idle: `servicemanager ... Tried to start
+aidl service android.hardware.biometrics.face.virtualhal.IVirtualHal/virtual` and `SELinux: Multiple same specifications for ...`.
+Android writes these to `/dev/kmsg`, which is the host's.
+*Cause:* the image declares the face-unlock feature, so `FaceService` registers face sensors at boot; on a userdebug build it also asks
+for a "virtual" test HAL with `waitForService`, which never returns: a `BiometricServiceRegistry` thread in system_server stays blocked
+and retries every second. Each retry also reloads the service contexts, and `system_ext_service_contexts` repeats six entries from
+`plat_service_contexts`, each reported every time.
+*Fix:* `build-system-img.sh` removes `/product/etc/permissions/android.hardware.biometrics.face.xml` (there is no face hardware) and drops
+system_ext service-context lines that exactly duplicate a platform line. Verified: 0 such lines afterwards, the blocked thread is gone.
+
+Not fixable here (expected noise): `IptablesRestoreController ... IDLETIMER ... --send_nl_msg` (only Android's kernel implements that
+option; mainline refuses it), `Failed to enable fs-verity` (the host filesystem backing `/data` has no fs-verity), `keystore2 ... rkpd`
+(no remote key provisioning), `WifiDataStall ... newStats: null` (the virtual radio has no link statistics), and Play services'
+`Failed to find update_engine` (no A/B system updates in a container).
+*Where:* `recipe/try.sh`, `recipe/bake-apps.sh`, `recipe/build-system-img.sh`, `installer/gbos-doctor.py`. *Status:* A verified on a clean
+install (YouTube); B verified with the same two changes applied through the writable layer (the rebuilt image itself not booted yet).
 
 ---
 

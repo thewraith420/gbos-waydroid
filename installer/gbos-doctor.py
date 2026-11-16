@@ -189,6 +189,13 @@ def check_waydroid(a):
         typ = re.search(r"^ro\.build\.type=userdebug$", t, re.M) is not None
         (ok if dbg and typ else fail)("container", "%s: ro.debuggable=1 and userdebug %s" % (pf, "set" if dbg and typ else "NOT set"),
                                       "" if dbg and typ else fix)
+        # Waydroid writes debug.stagefright.ccodec=0 on desktop GPUs; with this image's OMX removed that leaves apps NO codecs
+        if re.search(r"^debug\.stagefright\.ccodec=0$", t, re.M):
+            fail("container", "%s: debug.stagefright.ccodec=0 (Codec2 off: apps have no video/audio codecs)" % pf,
+                 "sudo sed -i 's/^debug.stagefright.ccodec=.*/debug.stagefright.ccodec=4/' %s/%s, then restart Waydroid "
+                 "(try.sh does this; `waydroid init`/upgrade rewrites it)" % (WAYDROID, pf))
+        else:
+            ok("container", "%s: Codec2 codecs enabled for apps" % pf)
     # the optional hybrid GPU mode
     if read(WAYDROID + "/gbos-gpu.json"):
         nodes = read(WAYDROID + "/lxc/waydroid/config_nodes") or ""

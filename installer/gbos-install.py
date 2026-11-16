@@ -262,8 +262,11 @@ def module_available(name):
     symbol it does not expose (e.g. Debian provides working legacy iptables with no CONFIG_NETFILTER_XTABLES_LEGACY)."""
     if module_loaded(name):
         return True
+    modinfo = find_tool("modinfo")       # usually /usr/sbin, which is not on a normal user's PATH on Debian
+    if not modinfo:
+        return False
     try:
-        r = subprocess.run(["modinfo", "-F", "filename", name], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        r = subprocess.run([modinfo, "-F", "filename", name], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     except OSError:
         return False
     return r.returncode == 0 and r.stdout.strip() != ""

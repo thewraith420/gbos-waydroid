@@ -30,7 +30,7 @@ if [ "$(id -u)" != 0 ]; then echo "run with sudo"; exit 1; fi
 
 if [ "${1:-}" = "--remove" ]; then
     rm -rf "$WV_DIR" "$STUB_DST" "$OV/system_ext/app/GbHubWidget"
-    rm -f "$OV/vendor/etc/vintf/manifest.xml"; rmdir "$OV/vendor/etc/vintf" 2>/dev/null || true
+    rm -f "$OV/vendor/etc/vintf/manifest.xml" "$OV/vendor/etc/media_codecs_c2.xml"; rmdir "$OV/vendor/etc/vintf" 2>/dev/null || true
     rm -f "$OV/system/lib64/libselinux.so" /var/lib/waydroid/overlay_rw/system/system/lib64/libselinux.so   # host-side rm: no whiteout
     rm -f "$OV/product/overlay/GbLanWifiOverlay.apk"; rmdir "$OV/product/overlay" 2>/dev/null || true
     rm -f "$OV/system/bin/gb-fakeap.sh" "$OV/system/bin/gb-fridaserver.sh" "$OV/system/bin/gb-dhcpd" "$OV/system/bin/gb-portrelay" "$OV/system/bin/gb-portrelay.sh" "$OV/system/bin/gb-wifi.sh" "$OV/system/bin/gb-storagemount.sh" "$OV/system/etc/fakewifi.apk" "$OV/vendor/etc/vintf/manifest/android.hardware.wifi.xml" "$OV/vendor/etc/init/android.hardware.cas@1.2-service.rc" "$OV/vendor/etc/init/android.hardware.media.omx@1.0-service.rc" "$OV/vendor/etc/init/android.hardware.camera.provider@2.7-external-service.rc" "$OV/vendor/etc/init/android.hardware.wifi.supplicant-service.rc" "$OV/system/etc/init/udsattestation.rc"; rmdir "$OV/vendor/etc/vintf/manifest" 2>/dev/null || true
@@ -201,6 +201,12 @@ rm -rf "$OV/system/etc/init/magisk" "/var/lib/waydroid/overlay_rw/system/system/
 # Shadow the vendor VINTF manifest (overlay lower layer survives try.sh/reset). Must stay well-formed XML.
 python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1])" "$W/vintf-manifest.no-omx.xml"
 install -D -m 644 "$W/vintf-manifest.no-omx.xml" "$OV/vendor/etc/vintf/manifest.xml"
+# Codec list. Android builds the list of codecs apps can use (MediaCodecList) from /vendor/etc/media_codecs_c2.xml. This vendor
+# image only ships the software Codec2 list under another name (media_codecs_google_c2.xml, which includes the audio and video
+# lists), and its media_codecs.xml is an empty template; the OMX codecs are gone (above). Without this link the list is EMPTY
+# ("MediaCodecList generated and serialized (56 bytes)"): no app can find a decoder or encoder, so video and audio playback,
+# recording and calls fail inside apps.
+ln -sfn media_codecs_google_c2.xml "$OV/vendor/etc/media_codecs_c2.xml"
 
 # Storage fix (fstab + loop device + fstab-suffix rc): also written into the persistent overlay layer, because
 # `waydroid init -f` (run by try.sh) deletes overlay_rw, where it used to live.
