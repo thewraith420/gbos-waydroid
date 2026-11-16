@@ -91,6 +91,10 @@ wmm_enabled=1
 auth_algs=1
 beacon_int=100
 EOC
+    # hostapd drops to the wifi user before it reads its config. This script runs as root, so on a fresh /data the file is
+    # created root 0600 and hostapd exits at once ("Could not open configuration file", logcat only) in an endless restart
+    # loop: no access point, Android never joins. (An old /data hid this: its copy had been made world-readable by hand.)
+    chown root:wifi $CONF; chmod 640 $CONF
     /vendor/bin/hw/hostapd $CONF >/data/local/tmp/hostapd.out 2>&1 &
     HPID=$!
     echo "hostapd started (pid $HPID) as '$want'"

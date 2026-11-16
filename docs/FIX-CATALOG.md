@@ -31,6 +31,7 @@ obfuscated and change between versions.
 | Bare wallpaper, no shelf; `pm list users` shows only `0:Owner`; Login screen is the home app | [25](#25-desktop-shows-only-a-wallpaper-no-shelf-no-launcher-owner-user-login-screen-stuck-as-home) |
 | Google sign-in: email accepted, **Next does nothing**; `fix-ui.out` shows `reading 'Ea'` | [26](#26-sign-in-next-never-reaches-the-password-screen-on-a-slow-machine-typeerror--reading-ea) |
 | Stuck at the boot animation / black screen; `odsign` aborts in a loop; kernel log: `failed to get security context` | [23](#23-boot-stops-at-the-boot-animation-odsign-aborts-failed-to-get-security-context) |
+| Fresh install: Wi-Fi on but never connects; `gb-fakeap.log` repeats `hostapd started`; `adb` stays `unauthorized` | [27](#27-fresh-install-no-wi-fi-and-adb-unauthorized) |
 
 ---
 
@@ -328,6 +329,25 @@ To repair a running install without rebooting: push the new `fix-ui.js` to `/dat
 (kill the `com.google.android.gms.ui` process, reopen Settings, tap Sign in), because fixing the script does not repair a page that already ran twice.
 *Where:* `recipe/fix-ui.js`, `recipe/gb-firstboot.sh`. *Status:* verified on the second machine (a Pixel Slate): sign-in completed and the account registered, with nothing injected.
 Note for reproducibility: the `unlock-signin` binary on that machine is a different build from the laptop's (different sha256); the script is byte-identical on both.
+
+### 27. Fresh install: no Wi-Fi, and adb "unauthorized"
+Two bugs found by the first clean end-to-end install. Both were hidden on the developer's machine by state left over from earlier hand work in its
+long-lived Android `/data`, which a fresh install does not have.
+
+*Symptom A:* Wi-Fi is switched on but never connects; `wlan1` has no `10.77.0.1`; `/data/local/tmp/gb-fakeap.log` repeats `hostapd started (pid N)` /
+`join requested` every few seconds and `hostapd.out` is empty. Running hostapd by hand also prints nothing; logcat says
+`hostapd: Could not open configuration file '/data/misc/wifi/gb-ap.conf' for reading`.
+*Cause:* `gb-fakeap.sh` (root) wrote `gb-ap.conf` as `root 0600`; hostapd switches to the `wifi` user before reading it. The old `/data` had a copy
+made world-readable by hand, and `cat >` keeps an existing file's mode, so it never showed.
+*Fix:* `gb-fakeap.sh` sets `root:wifi 0640` on the file before every start. By hand: `chown root:wifi /data/misc/wifi/gb-ap.conf; chmod 640` it; the
+script's loop starts hostapd and joins within a minute.
+
+*Symptom B:* `adb connect` to the container answers `unauthorized`, no "Allow USB debugging?" prompt ever appears, and every Phone Hub script stops
+with "not reachable or not booted".
+*Cause:* a fresh `/data` has no trusted keys **and** `adb_enabled=0`; Android only shows the authorization prompt while debugging is on.
+*Fix:* `recipe/gb-adb-authorize.sh` writes the sudo user's `~/.android/adbkey.pub` into `/data/misc/adb/adb_keys` and sets `adb_enabled=1`;
+`try.sh` runs it after the first boot. Run `sudo ./gb-adb-authorize.sh` from the work folder after any other reset of Android's data.
+*Where:* `recipe/fakeap/gb-fakeap.sh`, `recipe/gb-adb-authorize.sh`, `recipe/try.sh`. *Status:* both verified on a clean install.
 
 ---
 
