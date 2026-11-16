@@ -12,7 +12,7 @@ Installed by `install-host.sh`; see its header for all options.
 | `phonehub/appcast_up.sh` + `injector/` | user service `gb-appcast` | The App Cast supervisor: waits for the container, frida-server and the link, then attaches the cast session and keeps it attached. |
 | `injector/audio_relay.py` | user service `gb-audio` | Plays the phone's cast audio on this PC (port 8101). |
 | `injector/discover_host.py` | user service `gb-discover` | Lets the phone app find this PC without typing an IP (UDP 8096). |
-| `phonehub/gb-link-daemon.py` | user service `gb-link-daemon` | Backend for the GBOS home-screen widget (reconnect / open cast), port 8092 on the Waydroid bridge. |
+| `phonehub/gb-link-daemon.py` | user service `gb-link-daemon` | Backend for the GBOS home-screen widget (reconnect / open cast), port 8092 on the Waydroid bridge. The widget app itself (`com.gbos.hub`) is baked into the system by `recipe/bake-apps.sh`. |
 | `phonehub/gb-autostop.sh` | user service `gb-autostop` | Finishes a shutdown: stops the Waydroid session when Android powers itself off. |
 | `phonehub/gb-userfixes.sh`, `set-main-user.py` | run by hand, once | First-run provisioning: the settings inside Android's data that Phone Hub needs (see [INSTALL](../docs/INSTALL.md#6-first-boot-the-main-user-then-sign-in)). |
 

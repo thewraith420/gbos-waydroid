@@ -196,6 +196,9 @@ Then:
 2. On the phone, turn on *Cross-device services* for the account GBOS is signed in with.
 3. In GBOS, open the Cross-device services popup and scan its QR code with the phone.
 4. Start casting from the phone app (it finds your PC on its own), or open App Cast in GBOS.
+5. Optional: put the **Phone Hub widget** on the GBOS desktop (right-click the desktop, Widgets, "Phone Hub"). It shows
+   whether the Cross-Device link to your phone is up and has a **Reconnect** button. `bake-apps.sh` installs it as a system
+   app when the work folder was prepared with `--phone-hub`; it talks to the `gb-link-daemon` host service.
 
 Status and repair: `~/.local/share/gbos/phonehub/appcast_up.sh status`, `gb-reconnect.sh`. See
 [TROUBLESHOOTING](TROUBLESHOOTING.md). Everything up to and including `gb-userfixes.sh` has been run on a clean install;

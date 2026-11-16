@@ -29,7 +29,7 @@ STUB_DST="$OV/system_ext/app/ServiceabilityStub"
 if [ "$(id -u)" != 0 ]; then echo "run with sudo"; exit 1; fi
 
 if [ "${1:-}" = "--remove" ]; then
-    rm -rf "$WV_DIR" "$STUB_DST"
+    rm -rf "$WV_DIR" "$STUB_DST" "$OV/system_ext/app/GbHubWidget"
     rm -f "$OV/vendor/etc/vintf/manifest.xml"; rmdir "$OV/vendor/etc/vintf" 2>/dev/null || true
     rm -f "$OV/system/lib64/libselinux.so" /var/lib/waydroid/overlay_rw/system/system/lib64/libselinux.so   # host-side rm: no whiteout
     rm -f "$OV/product/overlay/GbLanWifiOverlay.apk"; rmdir "$OV/product/overlay" 2>/dev/null || true
@@ -57,6 +57,15 @@ fi
 install -d -m 755 "$OV/product" "$OV/product/app" "$WV_DIR" "$STUB_DST"
 install -m 644 "$WV_SRC"   "$WV_DIR/WebViewGoogle.apk"      # shadows the factory 149 file at the same path
 install -m 644 "$STUB_SRC" "$STUB_DST/ServiceabilityStub.apk"
+# Phone Hub desktop widget (com.gbos.hub): shows the Cross-Device link state and has a Reconnect button. It talks to the host's
+# gb-link-daemon (host/install-host.sh phonehub) on the Waydroid bridge, port 8092. Baked as a system app so every user has it
+# and a reset of Android's data keeps it. Built only by `gbos-install.py prepare --phone-hub`.
+if [ -f "$W/gbhub_widget/build/gbhub_widget.apk" ]; then
+    install -D -m 644 "$W/gbhub_widget/build/gbhub_widget.apk" "$OV/system_ext/app/GbHubWidget/GbHubWidget.apk"
+    echo "baked the Phone Hub widget (add it from the desktop's widget picker: 'Phone Hub')"
+else
+    echo "Phone Hub widget not built (prepare without --phone-hub): skipped"
+fi
 install -D -m 755 "$W/gb-firstboot.sh" "$OV/system/bin/gb-firstboot.sh"
 install -D -m 755 "$W/gb-audiofix.sh" "$OV/system/bin/gb-audiofix.sh"   # master-mute watcher (sound)
 install -D -m 755 "$W/gb-bthal.sh" "$OV/system/bin/gb-bthal.sh"   # Bluetooth HAL launcher (real adapter via host helper, else simulated)

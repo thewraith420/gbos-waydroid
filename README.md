@@ -33,6 +33,7 @@ machine (a Pixel Slate with an 8th-gen CPU) has reached the desktop with working
 | Android sees Wi-Fi (virtual radio named after your real network) and sits on your LAN | works |
 | Linux Terminal (Debian VM through Android's virtualization framework) | VM boots, networking works |
 | Phone Hub: link to a Pixel, notification sync, Do Not Disturb sync, Quick Access to phone files | works |
+| Phone Hub desktop widget: link status and a Reconnect button | works (our own app, installed by `bake-apps.sh`) |
 | Phone Hub **app streaming** (App Cast): phone apps in a window, clicks and typing sent back, phone audio | works through our own relay and decoder; latency is noticeable and bounded by the phone-side encoder |
 | First-run setup wizard | only its sign-in step runs (the "Finish Googlebook setup" notification); the rest is disabled on purpose, it needs a Google security-chip service that does not exist here |
 
