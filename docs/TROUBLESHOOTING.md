@@ -63,6 +63,34 @@ the Cross-device link, the cast session and the listening ports in one screen.
 | Picture works, clicks do nothing | the phone-side gesture agent died (the phone rebooted) | press *Re-arm* in the phone app (wireless debugging on), or restart the cast |
 | Everything stalls while a host job runs | memory pressure: Android's killer removes Play services and the cast app | stop heavy host jobs while casting; see Memory below |
 | Sound from the phone is missing | `gb-audio` not running, or the phone app's audio is off | `systemctl --user status gb-audio` (port 8101) |
+| Cross-device never connects; the keeper's log repeats `Gate forced 0 time(s)` | the Cross-Device Services app (`com.google.ambient.streaming`) updated itself and its obfuscated class names changed, so the keeper's debugger breakpoint lands on nothing (`$XDG_RUNTIME_DIR/gbos/hub-link/out` says `Unable to set deferred breakpoint`) | find the new names as below and set them; the keeper also logs a warning when the app's version is not the one the names are known for |
+
+### When an app update renames the classes
+
+The keeper and the App Cast feeder hook four classes inside the Cross-Device Services app. Google's build obfuscates their names,
+so an update renames them. The code inside stays the same, and each class has log strings that identify it. Known names:
+
+| Role | Where it is used | Before 2026-11-15 | 1.0.1387 (versionCode 100143140) | Identifying string |
+|---|---|---|---|---|
+| discovery gate | `gb-hub-link.sh` `GATE` (or `GB_GATE_CLASS`) | `lin` | `myr` | `Discovery is not paused, starting discoverDevices.` |
+| stall/launch watchdog | `injector/feed_live.js` `N_STALL` | `kkp` | `mbo`, `lyy` | `Stream stalled for %d ms` |
+| connection attempt | `injector/feed_live.js` `N_CONN` | `kjq` | `map` | `SecurityException during connection` |
+| Kotlin `Unit` | `injector/feed_live.js` `N_UNIT` | `xil` | `zlf` | `kotlin.Unit` |
+
+To find them for a new version, pull the app and disassemble it with [baksmali](https://github.com/baksmali/smali/releases)
+(light on memory, unlike a full decompile), then search for the strings:
+
+```sh
+adb shell pm path --user 10 com.google.ambient.streaming      # the /data/app/... base.apk
+adb pull <that path> cds.apk
+mkdir cds && cd cds && unzip -q ../cds.apk 'classes*.dex'
+for d in classes*.dex; do java -Xmx768m -jar baksmali.jar d "$d" -o smali; done
+grep -rlF 'Discovery is not paused, starting discoverDevices.' smali     # -> smali/<name>.smali
+```
+
+Check that each match has the same shape as before (for the gate: a class with a `synthetic b:Z` field and a method
+`b(Ljava/lang/Object;)Ljava/lang/Object;`). Then set the names, restart `gb-hub-link` and `gb-appcast`, and please open
+an issue with the version and the names so they can be added here.
 
 ## Sound, memory, shutdown
 

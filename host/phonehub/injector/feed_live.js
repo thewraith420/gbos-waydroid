@@ -26,6 +26,11 @@ var W=1376, H=736, FPS=60;
 var RECV_CLS='com.google.ambient.streaming.multidevicesync.appcast.core.openscreen.JniOpenScreenReceiver';
 var ACT_CLS='com.google.ambient.streaming.multidevicesync.appcast.receiver.AppCastActivity';
 var PKG='';
+// R8-obfuscated Cross-Device Services class names; they change with every update of the app.
+// Before the 2026-11-15 update: unit=xil, stall/launch watchdog=kkp, connection attempt=kjq.
+// 1.0.1387 (versionCode 100143140): unit=zlf, watchdog=mbo plus a second variant lyy, connection=map.
+// How to find them for a new version: docs/TROUBLESHOOTING.md#phone-hub.
+var N_UNIT='zlf', N_STALL=['mbo','lyy'], N_CONN='map';
 var POLL_MS=600, POLL_TRIES=400;
 
 function ts(){return new Date().toISOString().slice(11,23);}
@@ -180,7 +185,7 @@ function mapToPixelRaw(tx,ty,svW,svH){
 // moving GC that resumes once media is flowing, which then throws on the next call.
 var UNIT=null, KJQ_HOOKED=false;
 function unitSentinel(){
-  if(!UNIT){ try{ UNIT=Java.retain(Java.use(PKG+'xil').a.value); }catch(e){ log('WARN','xil.a retain: '+e); } }
+  if(!UNIT){ try{ UNIT=Java.retain(Java.use(PKG+N_UNIT).a.value); }catch(e){ log('WARN',N_UNIT+'.a retain: '+e); } }
   return UNIT;   // null is still Object-compatible if the lookup ever fails
 }
 try{ unitSentinel(); }catch(e){}
@@ -551,8 +556,8 @@ function suppressLaunchTimeout(){
   if(T_SUPP) return;
   if(FO.noKkp){ log('LIVE','[FO] kkp.b suppression DISABLED'); return; }
   try{
-    Java.use(PKG+'kkp').b.implementation=function(obj){ return unitSentinel(); };
-    T_SUPP=true; log('LIVE','kkp.b launch/stall timeout SUPPRESSED (unit='+unitSentinel()+')');
+    N_STALL.forEach(function(c){ Java.use(PKG+c).b.implementation=function(obj){ return unitSentinel(); }; });
+    T_SUPP=true; log('LIVE',N_STALL.join('/')+'.b launch/stall timeout SUPPRESSED (unit='+unitSentinel()+')');
   }catch(e){ log('WARN','suppress kkp.b: '+e); }
 }
 function surfaceKeeper(){
@@ -904,7 +909,7 @@ function ensureSurface(recv, cb){
               // implementation on every in-place re-skin churns the moving GC (ART17) and recurred as
               // "Implementation for b expected return value compatible with java.lang.Object" + an
               // agent-unload SIGSEGV that took ambient down. The hook persists across re-skins anyway.
-              if(!KJQ_HOOKED){ try{ Java.use(PKG+'kjq').b.implementation=function(obj){ return unitSentinel(); }; KJQ_HOOKED=true; }catch(e){ log('WARN','kjq.b suppress: '+e); } }
+              if(!KJQ_HOOKED){ try{ Java.use(PKG+N_CONN).b.implementation=function(obj){ return unitSentinel(); }; KJQ_HOOKED=true; }catch(e){ log('WARN','kjq.b suppress: '+e); } }
               suppressReleaseSurface();
               connectInput();
               phoneOpen(launchPkg, launchNkey, 'window opened');
@@ -934,7 +939,7 @@ function ensureSurface(recv, cb){
               // Install ONCE (see note in the ownDecoder branch above) — re-replacing it per re-skin
               // churned the moving GC and crashed the agent.
               if(!KJQ_HOOKED){ try{
-                Java.use(PKG+'kjq').b.implementation=function(obj){ return unitSentinel(); };
+                Java.use(PKG+N_CONN).b.implementation=function(obj){ return unitSentinel(); };
                 KJQ_HOOKED=true;
               }catch(e){ log('WARN','kjq.b suppress: '+e); } }
               suppressReleaseSurface();
@@ -1301,8 +1306,8 @@ function watchSurface(sv){
 function revertJavaHooks(){
   try{ Java.use('android.media.MediaCodec').configure.overloads.forEach(function(ov){ try{ ov.implementation=null; }catch(e){} }); }catch(e){}
   try{ Java.use(RECV_CLS).$init.overloads.forEach(function(ov){ try{ ov.implementation=null; }catch(e){} }); }catch(e){}
-  try{ Java.use(PKG+'kkp').b.implementation=null; }catch(e){}
-  try{ Java.use(PKG+'kjq').b.implementation=null; }catch(e){}
+  N_STALL.forEach(function(c){ try{ Java.use(PKG+c).b.implementation=null; }catch(e){} });
+  try{ Java.use(PKG+N_CONN).b.implementation=null; }catch(e){}
   try{ Java.use('jys').u.implementation=null; }catch(e){}
   SV_HOOKED=false;
 }

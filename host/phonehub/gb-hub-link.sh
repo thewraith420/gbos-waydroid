@@ -1,6 +1,6 @@
 #!/bin/bash
 # gb-hub-link: keeps GBOS's Cross-Device link alive across restarts (GBOS_WAYDROID_FIXES.md 3.19/3.20).
-# Forces the discovery gate lin.b -> true during initial service startup, then IMMEDIATELY
+# Forces the discovery gate ($GATE.b) -> true during initial service startup, then IMMEDIATELY
 # detaches jdb so no debugger or breakpoint stays attached during normal operation.
 # This prevents JDWP deadlocks, socket timeouts, and connection drop/reconnect thrashing.
 
@@ -11,6 +11,13 @@ ADB_ADDR=${ADB_ADDR:-$(gb_container)}
 PORT=${JDWP_PORT:-8701}
 APP=com.google.ambient.streaming
 SVC=$APP/.multidevicesync.devicelink.dtdi.foreground.ForegroundDiscoveryService
+# The discovery gate is a class whose name R8 obfuscation changes with every update of the Cross-Device
+# Services app. A wrong name does not fail loudly: jdb only says "Unable to set deferred breakpoint" and the
+# gate is forced 0 times, so the link never comes up. Known names, by the app's versionCode:
+#   before the 2026-11-15 update: lin      100143140 (1.0.1387): myr
+# Override with GB_GATE_CLASS. docs/TROUBLESHOOTING.md#phone-hub says how to find the name for a new version.
+GATE_KNOWN_VERSION=100143140
+GATE=${GB_GATE_CLASS:-myr}
 D=$GB_RUN/hub-link
 mkdir -p "$D"
 # AppCast coexistence: while this lock exists an injected AppCast session is live, so the keeper
@@ -224,7 +231,7 @@ kick_gate() {
     sleep 0.1
   done
 
-  echo "stop in lin.b" >&7
+  echo "stop in $GATE.b" >&7
   sleep 2
   echo resume >&7
   A shell "am clear-debug-app" >/dev/null 2>&1
@@ -232,7 +239,7 @@ kick_gate() {
   log "jdb attached (pid $P), watching for initial gate flow events..."
   local seen=0 h dur=15
   for i in $(seq 1 $dur); do
-    h=$(grep -c "Breakpoint hit.*lin\.b" "$D/out" 2>/dev/null || true)
+    h=$(grep -c "Breakpoint hit.*$GATE\.b" "$D/out" 2>/dev/null || true)
     if [ "$h" -gt "$seen" ]; then
       echo "set this.b = true" >&7
       sleep 0.4
@@ -243,7 +250,7 @@ kick_gate() {
   done
 
   # Clean detach: clear breakpoint, resume all threads, and exit jdb
-  echo "clear lin.b" >&7 2>/dev/null || true
+  echo "clear $GATE.b" >&7 2>/dev/null || true
   sleep 0.2
   echo resume >&7 2>/dev/null || true
   sleep 0.2
@@ -281,7 +288,7 @@ repair_cast_mode() {
   ensure_radio
 
   # 2026-11-01: restart_discovery is intentionally NOT used here any more. A restarted
-  # ForegroundDiscoveryService is a new instance whose gate (lin.b) is false again, and nothing in this
+  # ForegroundDiscoveryService is a new instance whose gate ($GATE.b) is false again, and nothing in this
   # path can force it (no jdb during a cast), so the restart threw away the forced gate and could never
   # link. Play services was the only in-place step that ever helped.
   refresh_gms
@@ -323,9 +330,21 @@ note_kick_result() {
 }
 
 log "Starting GBOS Cross-Device link keeper..."
+VERSION_CHECKED=0
+check_cds_version() {   # once per keeper start, after the container is reachable
+  [ "$VERSION_CHECKED" = 0 ] || return 0
+  local v
+  v=$(A shell "dumpsys package $APP" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p' | sort -n | tail -1 | tr -d '\r')
+  [ -n "$v" ] || return 0
+  VERSION_CHECKED=1
+  if [ -z "${GB_GATE_CLASS:-}" ] && [ "$v" != "$GATE_KNOWN_VERSION" ]; then
+    log "WARNING: Cross-Device Services is version $v; the gate name '$GATE' is known for $GATE_KNOWN_VERSION only. If the gate is forced 0 times, the app update renamed it: see docs/TROUBLESHOOTING.md#phone-hub."
+  fi
+}
 
 while true; do
   wait_container
+  check_cds_version
   ensure_gms_lan_route
   ensure_recorder
 

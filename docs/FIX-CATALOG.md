@@ -33,6 +33,7 @@ obfuscated and change between versions.
 | Stuck at the boot animation / black screen; `odsign` aborts in a loop; kernel log: `failed to get security context` | [23](#23-boot-stops-at-the-boot-animation-odsign-aborts-failed-to-get-security-context) |
 | Fresh install: Wi-Fi on but never connects; `gb-fakeap.log` repeats `hostapd started`; `adb` stays `unauthorized` | [27](#27-fresh-install-no-wi-fi-and-adb-unauthorized) |
 | Apps cannot play video/audio (empty codec list, `MediaCodecList generated and serialized (56 bytes)`); host journal flooded with `SELinux: Multiple same specifications` / face `virtualhal` lines | [28](#28-fresh-install-no-codecs-for-apps-and-a-flood-in-the-host-journal) |
+| Phone link never connects; the keeper logs `Gate forced 0 time(s)` every round (after the cross-device app updated) | [29](#29-phone-link-never-comes-up-after-the-cross-device-app-updated-itself) |
 
 ---
 
@@ -378,6 +379,20 @@ option; mainline refuses it), `Failed to enable fs-verity` (the host filesystem 
 `Failed to find update_engine` (no A/B system updates in a container).
 *Where:* `recipe/try.sh`, `recipe/bake-apps.sh`, `recipe/build-system-img.sh`, `installer/gbos-doctor.py`. *Status:* A verified on a clean
 install (YouTube); B verified with the same two changes applied through the writable layer (the rebuilt image itself not booted yet).
+
+### 29. Phone link never comes up after the cross-device app updated itself
+*Symptom:* the Cross-device link stays down for good, also after Reconnect, a phone-side toggle and Play services restarts. Every
+round of the keeper logs `Gate forced 0 time(s)`; GBOS's discovery service shows "Waiting for connections"; the phone is reachable.
+*Cause:* the keeper forces the discovery gate (entry 16, step 3) with a debugger breakpoint on the gate's class, and that class name is
+R8-obfuscated. Play Store updated `com.google.ambient.streaming` to 1.0.1387 on 2026-11-15, which renamed `lin` to `myr` (same fields,
+same method, same log strings). jdb answered `Unable to set deferred breakpoint lin.b : No method b in lin`, nothing was forced, and
+the link stayed down. The last forced gate in the journal is the evening before the update; every round after it forced 0. The App
+Cast feeder's three obfuscated classes were renamed too (`kjq`, `kkp`, `xil` became `map`, `mbo` plus a new variant `lyy`, and `zlf`).
+*Fix:* the names are variables now (`GATE` / `GB_GATE_CLASS` in the keeper, `N_UNIT`, `N_STALL`, `N_CONN` in `feed_live.js`), the keeper
+warns when the app's versionCode is not the one they are known for, and TROUBLESHOOTING has the table of known names and how to
+find new ones (baksmali, search for each class's log string). Verified: with `myr` the next kick forced the gate 3 times and the link
+connected 3 s later. The App Cast names are matched statically (identical constructors and strings), not yet exercised by a cast.
+*Where:* `host/phonehub/gb-hub-link.sh`, `host/phonehub/hub_try.sh`, `host/phonehub/injector/feed_live.js`, `docs/TROUBLESHOOTING.md`.
 
 ---
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # One instrumented Phone Hub connection attempt (GBOS_WAYDROID_FIXES.md 3.19/3.20). Needs adb to the container, jdb, the lid override OPEN.
-# Forces the unidentified discovery gate (lin.b -> true) on every re-evaluation for DUR seconds, captures GMS dtdi/Nearby events and prints
+# Forces the unidentified discovery gate (myr.b -> true) on every re-evaluation for DUR seconds, captures GMS dtdi/Nearby events and prints
 # per-hop counters for traffic from the fake Wi-Fi to the phone. Usage: hub_try.sh [PIXEL_IP] [DUR]
 . "$(dirname "$(readlink -f "$0")")/lib/gbos-env.sh" || exit 1
 A=${ADB:-$(gb_container)}; PX=${1:-}; DUR=${2:-90}
@@ -16,7 +16,7 @@ adb -s $A shell 'am force-stop com.google.ambient.streaming; am set-debug-app -w
 sleep 5
 P=$(adb -s $A shell pidof com.google.ambient.streaming | tr -d '\r'); adb -s $A forward tcp:8700 jdwp:$P >/dev/null
 mkfifo $S/jin; (timeout $((DUR+10)) jdb -attach localhost:8700 < $S/jin > $S/jdb.out 2>&1 &); exec 7>$S/jin
-echo "stop in lin.b" >&7; sleep 3; echo resume >&7
+echo "stop in myr.b" >&7; sleep 3; echo resume >&7
 seen=0; for i in $(seq 1 $DUR); do h=$(grep -c "Breakpoint hit" $S/jdb.out); if [ "$h" -gt "$seen" ]; then echo "set this.b = true" >&7; sleep 0.4; echo cont >&7; seen=$h; fi; sleep 1; done
 echo exit >&7; exec 7>&-; adb -s $A shell 'am clear-debug-app'
 echo "== events since $T0"
