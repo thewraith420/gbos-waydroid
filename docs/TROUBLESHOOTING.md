@@ -76,6 +76,10 @@ so an update renames them. The code inside stays the same, and each class has lo
 | stall/launch watchdog | `injector/feed_live.js` `N_STALL` | `kkp` | `mbo`, `lyy` | `Stream stalled for %d ms` |
 | connection attempt | `injector/feed_live.js` `N_CONN` | `kjq` | `map` | `SecurityException during connection` |
 | Kotlin `Unit` | `injector/feed_live.js` `N_UNIT` | `xil` | `zlf` | `kotlin.Unit` |
+| codec list (static helpers) | `injector/appcast_loopback.js` `N_CODECS` | `jwi` | `ljx` | `c2.android.` |
+| display session | `injector/appcast_loopback.js` `N_DISPLAY` | `kan` | `lnp` | `Acquired display-specific wake lock and Wi-Fi lock for display` |
+| connect hook | `injector/appcast_loopback.js` `N_CONNECT` | `llz` | `ncd` | `DeviceLinkService#connectDevice: Failed to notify listener.` |
+| device link | `injector/appcast_loopback.js` `N_LINK` | `lmb` | `ncf` | `Closing channel for device %s` |
 
 To find them for a new version, pull the app and disassemble it with [baksmali](https://github.com/baksmali/smali/releases)
 (light on memory, unlike a full decompile), then search for the strings:
@@ -87,6 +91,12 @@ mkdir cds && cd cds && unzip -q ../cds.apk 'classes*.dex'
 for d in classes*.dex; do java -Xmx768m -jar baksmali.jar d "$d" -o smali; done
 grep -rlF 'Discovery is not paused, starting discoverDevices.' smali     # -> smali/<name>.smali
 ```
+
+**Method names move too.** In 1.0.1387 the codec helpers kept their class role but shifted method names: the decoder-name
+method `f(String,boolean,boolean)` became `e`, `g(String,boolean)` became `f`, and `h(List)` became `g`
+(`N_CODECS_DECNAME`, `N_CODECS_NAME`, `N_CODECS_MIME`). Hooking the old names attached string-returning replacements to
+unrelated methods and crashed the app's garbage collector (`GC tried to mark invalid reference`) about 13 s after a cast
+started. Compare the method lists (`grep '^.method' X.smali`) of old and new, not only the class names.
 
 Check that each match has the same shape as before (for the gate: a class with a `synthetic b:Z` field and a method
 `b(Ljava/lang/Object;)Ljava/lang/Object;`). Then set the names, restart `gb-hub-link` and `gb-appcast`, and please open

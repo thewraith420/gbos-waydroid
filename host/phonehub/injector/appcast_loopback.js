@@ -31,6 +31,13 @@
 'use strict';
 
 var PKG='';
+// R8-obfuscated Cross-Device Services names; they change with every update of the app.
+// Before the 2026-11-15 update: codec list=jwi (decoder-name method f), display session=kan, connect hook=llz, device link=lmb.
+// 1.0.1387 (versionCode 100143140): ljx (decoder-name method is now e; the new f is a different method), lnp, ncd, ncf.
+// Codec-class methods by role (old jwi -> new ljx): mime-from-list h(List)->g, decoder name f(String,Z,Z)->e,
+// codec name g(String,Z)->f. Hooks are pinned to their argument types so a rename fails loudly instead of
+// replacing an unrelated method (a mismatched replacement crashed ART's moving GC on 2026-11-16).
+var N_CODECS='ljx', N_CODECS_DECNAME='e', N_CODECS_MIME='g', N_CODECS_NAME='f', N_DISPLAY='lnp', N_CONNECT='ncd', N_LINK='ncf';
 var MEDIA_IP='10.77.0.1';
 var DEV_A='synthetic-appcast', SELF_A='Pixel 7',  UUID_A='b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5';
 var DEV_B='synthetic-recv',    SELF_B='SyntheticPhone',  UUID_B='c1d2e3f4-0000-4b4b-b5b5-d6d6d6d6d6d6';
@@ -329,7 +336,7 @@ Java.perform(function(){
     Java.scheduleOnMainThread(function(){
       try{
         if(!lmbInst){
-          Java.choose(PKG+'lmb',{
+          Java.choose(PKG+N_LINK,{
             onMatch:function(x){ try{ lmbInst=Java.retain(x); }catch(e){ lmbInst=x; } return 'stop'; },
             onComplete:function(){}
           });
@@ -422,7 +429,7 @@ Java.perform(function(){
 
   var JwiRef=null;
   try {
-    JwiRef = Java.use(PKG + 'jwi');
+    JwiRef = Java.use(PKG+N_CODECS);
     // Do NOT hook jwi.a on bare-metal Android 17 hardware: jwi.a(false) natively returns
     // [video/x-vnd.on2.vp9, video/avc, video/hevc, video/x-vnd.on2.vp8, video/av01] and
     // jwi.a(true) natively returns [video/avc]. Hooking jwi.a with a Java.retain(ArrayList)
@@ -438,7 +445,7 @@ Java.perform(function(){
     try { hasNativeAvc = (nativeDecs && nativeDecs.size() > 0); } catch(e) {}
     var prefDecName = 'c2.android.avc.decoder';
     try {
-      var hwDec = JwiRef.f('video/avc', false, false);
+      var hwDec = JwiRef[N_CODECS_DECNAME]('video/avc', false, false);
       if (hwDec && ('' + hwDec).length > 0) prefDecName = '' + hwDec;
     } catch(e) {}
     globalThis.__GB_PREF_AVC_DEC = prefDecName;
@@ -449,14 +456,14 @@ Java.perform(function(){
         l.add('video/avc');
         return l;
       };
-      log('HOOK', 'jwi.a -> fresh ArrayList([video/avc]) (empty native MediaCodecList fallback)');
+      log('HOOK', N_CODECS+'.a -> fresh ArrayList([video/avc]) (empty native MediaCodecList fallback)');
     } else {
       log('HOOK', 'jwi.a left NATIVE (' + nativeDecs.size() + ' decoders present; skipping java.util.List hook)');
     }
-    JwiRef.h.implementation = function(list) { return 'video/avc'; };
-    JwiRef.f.implementation = function(mime, isEncoder, isHardware) { return isEncoder ? 'c2.android.avc.encoder' : prefDecName; };
-    JwiRef.g.implementation = function(mime, isEncoder) { return isEncoder ? 'c2.android.avc.encoder' : prefDecName; };
-    log('HOOK', 'jwi {h,f,g} -> plain JS strings video/avc, dec=' + prefDecName + ', enc=c2.android.avc.encoder');
+    JwiRef[N_CODECS_MIME].overload('java.util.List').implementation = function(list) { return 'video/avc'; };
+    JwiRef[N_CODECS_DECNAME].overload('java.lang.String', 'boolean', 'boolean').implementation = function(mime, isEncoder, isHardware) { return isEncoder ? 'c2.android.avc.encoder' : prefDecName; };
+    JwiRef[N_CODECS_NAME].overload('java.lang.String', 'boolean').implementation = function(mime, isEncoder) { return isEncoder ? 'c2.android.avc.encoder' : prefDecName; };
+    log('HOOK', N_CODECS + ' {' + [N_CODECS_MIME, N_CODECS_DECNAME, N_CODECS_NAME].join(',') + '} -> plain JS strings video/avc, dec=' + prefDecName + ', enc=c2.android.avc.encoder');
   } catch(e) { log('WARN', 'jwi hooks: ' + e); }
 
   // Direct-launch shortcut: once kry.a has built the sender's VirtualDisplay (via krr/kbl/kbk->kan),
@@ -470,7 +477,7 @@ Java.perform(function(){
     if(launchedApp)return;
     log('KAN','launch attempt (retries='+retries+')');
     var inst=null;
-    try{ Java.choose(PKG+'kan',{ onMatch:function(x){ inst=x; return 'stop'; }, onComplete:function(){} }); }
+    try{ Java.choose(PKG+N_DISPLAY,{ onMatch:function(x){ inst=x; return 'stop'; }, onComplete:function(){} }); }
     catch(e){ log('WARN','kan choose: '+e); }
     if(!inst){
       if(retries>0){ setTimeout(function(){ Java.perform(function(){ launchSettingsOnDisplay(retries-1); }); },1500); }
@@ -694,7 +701,7 @@ Java.perform(function(){
 
   function attachLlz(why){
     try{
-      if(!Llz){ Llz=Java.use(PKG+'llz'); LlzRef=Llz; }
+      if(!Llz){ Llz=Java.use(PKG+N_CONNECT); LlzRef=Llz; }
       if(llzAttached){ log('HOOK','llz.a already armed — '+why); return; }
       pauseGc('arming llz.a');
       Llz.a.overloads.forEach(function(ov){ ov.implementation=makeLlzImpl(ov); });
@@ -734,7 +741,7 @@ Java.perform(function(){
   var llzBootTimer=setTimeout(function(){ llzBootTimer=null; detachLlz('armed 45s with no Establish'); }, 45000);
 
   function findLmb(retries){
-    Java.choose(PKG+'lmb',{
+    Java.choose(PKG+N_LINK,{
       onMatch:function(x){
         try{
           if(!lmbInst) lmbInst=Java.retain(x);
@@ -817,7 +824,7 @@ Java.perform(function(){
     try{ if(llzArmTimer){ clearTimeout(llzArmTimer); llzArmTimer=null; } }catch(e){}
     try{ if(llzBootTimer){ clearTimeout(llzBootTimer); llzBootTimer=null; } }catch(e){}
     try{ detachLlz('host shutdown', false); }catch(e){}
-    try{ if(JwiRef){ ['h','a','f','g'].forEach(function(m){ try{ JwiRef[m].implementation=null; }catch(e){} }); } }catch(e){}
+    try{ if(JwiRef){ ['a',N_CODECS_MIME,N_CODECS_DECNAME,N_CODECS_NAME].forEach(function(m){ try{ JwiRef[m].implementation=null; }catch(e){} }); } }catch(e){}
     try{
       var closeFn = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
       if(globalThis.__GB_DUMMY_TCP_FD >= 0){ closeFn(globalThis.__GB_DUMMY_TCP_FD); globalThis.__GB_DUMMY_TCP_FD = -1; }

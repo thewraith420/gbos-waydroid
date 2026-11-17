@@ -391,8 +391,17 @@ Cast feeder's three obfuscated classes were renamed too (`kjq`, `kkp`, `xil` bec
 *Fix:* the names are variables now (`GATE` / `GB_GATE_CLASS` in the keeper, `N_UNIT`, `N_STALL`, `N_CONN` in `feed_live.js`), the keeper
 warns when the app's versionCode is not the one they are known for, and TROUBLESHOOTING has the table of known names and how to
 find new ones (baksmali, search for each class's log string). Verified: with `myr` the next kick forced the gate 3 times and the link
-connected 3 s later. The App Cast names are matched statically (identical constructors and strings), not yet exercised by a cast.
-*Where:* `host/phonehub/gb-hub-link.sh`, `host/phonehub/hub_try.sh`, `host/phonehub/injector/feed_live.js`, `docs/TROUBLESHOOTING.md`.
+connected 3 s later.
+*App Cast, the same update:* `appcast_loopback.js` used four more renamed classes (`jwi`, `kan`, `llz`, `lmb` became `ljx`, `lnp`, `ncd`,
+`ncf`). With `llz` wrong the cast window never established (`llz.a DISARMED — armed 45s with no Establish`), the supervisor saw 0
+frames, restarted the cross-device app, and that dropped the link: the two services fought each other. With the class names fixed the
+cast played, then the app died 13 s after its moving GC resumed: `GC tried to mark invalid reference 0x80008` in
+`MarkCompact::MarkRoots` → `ArtMethod::VisitRoots`. Cause: the codec helper class also renamed its *methods* (`f`→`e`, `g`→`f`, `h`→`g`),
+so the script's string-returning replacements for `h`, `f`, `g` landed on different methods, one of them returning boolean. Hooks are
+now addressed by role and pinned to argument types with `.overload(...)`, so a future rename fails with a warning instead.
+Verified: cast running with the link connected, no crash for 5 minutes after the GC resumed (it had crashed at 13 s).
+*Where:* `host/phonehub/gb-hub-link.sh`, `host/phonehub/hub_try.sh`, `host/phonehub/injector/feed_live.js`,
+`host/phonehub/injector/appcast_loopback.js`, `docs/TROUBLESHOOTING.md`.
 
 ---
 
