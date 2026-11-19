@@ -54,6 +54,7 @@ STATUS_ICON = {"ok": ("object-select-symbolic", "success"), "warn": ("dialog-war
 
 DEFAULTS = {"downloads": str(HOME / "gbos" / "dl"), "work": str(HOME / "gbos" / "work"),
             "backups": str(HOME / "gbos" / "backups"), "source": "prebuilt", "phone_hub": True, "bluetooth": False,
+            "phone_accessibility": True, "phone_addr": "",
             "done": {}}
 
 
@@ -284,7 +285,7 @@ class Window(Adw.ApplicationWindow):
         add(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         for build in (self.page_check, self.page_download, self.page_prepare, self.page_backup, self.page_build,
-                      self.page_bake, self.page_host, self.page_mainuser, self.page_signin, self.page_phone,
+                      self.page_bake, self.page_host, self.page_mainuser, self.page_signin, self.page_phonesetup, self.page_phone,
                       self.page_doctor):
             self.add_page(build())
 
@@ -447,8 +448,10 @@ class Window(Adw.ApplicationWindow):
                 self.mark(page, self.cfg["done"].get(page.key))
             if then:
                 then()
-        else:
+        elif self.job_mark:
             self.mark(page, "failed")
+        else:                                   # a check-only run must not change the step's state
+            self.mark(page, self.cfg["done"].get(page.key))
 
     def stop(self, _b):
         if self.running is not None and not self.job_cmd.root:
@@ -812,18 +815,75 @@ class Window(Adw.ApplicationWindow):
         p.run_button.connect("clicked", go)
         return p
 
+    def page_phonesetup(self):
+        p = Page(self, "phonesetup", "Set up your phone",
+                 "Installs the <b>GBOS Cast</b> companion app on your Android phone (Android 14 or newer) and sets it "
+                 "up over <b>wireless debugging</b>, in one go.\n\n"
+                 "<b>First, on the phone:</b> Settings → About phone → tap <i>Build number</i> seven times to unlock "
+                 "Developer options, then Developer options → <b>Wireless debugging</b> on (phone and PC on the same "
+                 "Wi-Fi). Copy its <i>IP address &amp; Port</i> below. <b>The first time</b> this PC talks to the phone, "
+                 "tap <i>Pair device with pairing code</i> on that screen and copy the pairing IP:port and the 6-digit "
+                 "code too (both change every time that dialog opens). A USB cable with USB debugging works as well: "
+                 "leave the fields empty.\n\n"
+                 "<b>Set up phone</b> then installs the app (built by Prepare, signed with your own key), grants the "
+                 "permissions it needs (changing developer settings for the Re-arm button, recording the phone's "
+                 "sound, notifications), allows its notification access so a phone notification tapped on GBOS opens on "
+                 "the phone, optionally turns on its accessibility service for touch control, and opens it. Every "
+                 "change is read back. Nothing else on the phone is touched; uninstalling GBOS Cast undoes all of it. "
+                 "<b>Check phone</b> only reports.",
+                 "Set up phone")
+        g = Adw.PreferencesGroup(title="Phone")
+        addr = Adw.EntryRow(title="Wireless debugging IP address &amp; Port (e.g. 192.168.1.20:41234)")
+        addr.set_text(self.cfg.get("phone_addr", ""))
+        addr.connect("changed", lambda r: (self.cfg.__setitem__("phone_addr", r.get_text().strip()), save_config(self.cfg)))
+        g.add(addr)
+        pair_addr = Adw.EntryRow(title="First time only: pairing IP address &amp; Port")
+        pair_code = Adw.EntryRow(title="First time only: 6-digit pairing code")
+        g.add(pair_addr)
+        g.add(pair_code)
+        g.add(switch_row(self, "Touch control through accessibility",
+                         "Optional. The app's touch agent does the same job, and Android's Advanced Protection blocks "
+                         "this for apps from outside the Play Store", "phone_accessibility"))
+        p.options.append(g)
+        tool = REPO / "host" / "phonehub" / "gb-phone-setup.sh"
+
+        def argv(check):
+            a = [str(tool)]
+            if self.cfg.get("phone_addr"):
+                a += ["--connect", self.cfg["phone_addr"]]
+            pa, pc = pair_addr.get_text().strip(), pair_code.get_text().strip()
+            if pa and pc:
+                a += ["--pair", pa, "--code", pc]
+            if check:
+                return a + ["--check"]
+            a += ["--work", self.W]
+            if not self.cfg["phone_accessibility"]:
+                a.append("--no-accessibility")
+            return a
+        chk = Gtk.Button(label="Check phone")
+        chk.add_css_class("pill")
+        chk.connect("clicked", lambda _b: self.run(p, [Cmd(argv=argv(True))], mark=False))
+        p.buttons.append(chk)
+
+        def go(_b):
+            if not self.need_work(p, "gbcast_app/build/gbcast.apk"):
+                return
+            self.run(p, [Cmd(argv=argv(False))], then=lambda: self.next_step(p))
+        p.run_button.connect("clicked", go)
+        return p
+
     def page_phone(self):
-        apk = Path(self.W) / "gbcast_app" / "build"
         p = Page(self, "phone", "Pair your phone",
-                 "These steps happen on your phone and in GBOS:\n\n"
-                 "1. Install the phone app on the phone, built into <tt>%s</tt> (<tt>adb install</tt> with the phone "
-                 "connected by USB).\n"
+                 "With the phone set up (previous step), finish at the phone and in GBOS:\n\n"
+                 "1. In <b>GBOS Cast</b> on the phone, press <b>Re-arm touch forwarding</b> once (it starts the touch "
+                 "agent; needed again only after the phone reboots). Wireless debugging can be switched off "
+                 "afterwards: Re-arm turns it on by itself for a few seconds when it needs it.\n"
                  "2. On the phone, turn on <b>Cross-device services</b> for the account GBOS is signed in with.\n"
                  "3. In GBOS, open the Cross-device services popup and scan its QR code with the phone.\n"
                  "4. Start casting from the phone app (it finds your PC on its own), or open App Cast in GBOS.\n"
                  "5. Optional: put the <b>Phone Hub widget</b> on the GBOS desktop (right-click the desktop, Widgets, "
                  "\"Phone Hub\"). It shows whether the link is up and has a Reconnect button.\n\n"
-                 "The button below shows the state of the Phone Hub services." % GLib.markup_escape_text(str(apk)),
+                 "The button below shows the state of the Phone Hub services.",
                  "Show Phone Hub status")
         done = Gtk.Button(label="Paired")
         done.add_css_class("pill")

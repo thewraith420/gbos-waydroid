@@ -9,7 +9,7 @@ affiliated with or endorsed by Google, Lenovo or the Waydroid project. "Googlebo
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/01-check-dark.png">
-  <img alt="The GBOS installer: a sidebar of eleven steps, with the machine check reporting Ready to install" src="assets/screenshots/01-check-light.png" width="860">
+  <img alt="The GBOS installer: a sidebar of twelve steps, with the machine check reporting Ready to install" src="assets/screenshots/01-check-light.png" width="860">
 </picture>
 
 ## Before you start
@@ -134,24 +134,37 @@ In GBOS, sign in with the Google account **you use on your phone**, from the **F
   <img alt="The sign-in page after the Phone Hub settings were applied" src="assets/screenshots/09-signin-light.png" width="760">
 </picture>
 
-### 10. Pair your phone
+### 10. Set up your phone
 
-Install the companion app on your phone, turn on Cross-device services there, and scan the QR code GBOS shows. The page
-lists each step. Then put the **Phone Hub widget** on the GBOS desktop to see the link and reconnect it in one click.
+On your Android phone (Android 14 or newer) turn on **Wireless debugging** in Developer options and copy its address and
+port into the page; the first time, also the pairing address and code from *Pair device with pairing code*. **Set up
+phone** installs the companion app GBOS Cast, grants the permissions it needs, allows its notification access, optionally
+turns on touch control, and checks that each change took.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/10-phone-dark.png">
-  <img alt="The pair-your-phone page listing the steps" src="assets/screenshots/10-phone-light.png" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/10-phonesetup-dark.png">
+  <img alt="The set-up-your-phone page with fields for the wireless debugging address and pairing code" src="assets/screenshots/10-phonesetup-light.png" width="760">
 </picture>
 
-### 11. Health check
+### 11. Pair your phone
+
+In GBOS Cast press **Re-arm touch forwarding** once, turn on Cross-device services on the phone, and scan the QR code
+GBOS shows. The page lists each step. Then put the **Phone Hub widget** on the GBOS desktop to see the link and reconnect
+it in one click.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/11-phone-dark.png">
+  <img alt="The pair-your-phone page listing the steps" src="assets/screenshots/11-phone-light.png" width="760">
+</picture>
+
+### 12. Health check
 
 A read-only check of the whole install. Anything it flags comes with the command that fixes it. Run it whenever
 something seems off. **Start GBOS** opens it.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/11-doctor-dark.png">
-  <img alt="The health check reporting nothing broken" src="assets/screenshots/11-doctor-light.png" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/12-doctor-dark.png">
+  <img alt="The health check reporting nothing broken" src="assets/screenshots/12-doctor-light.png" width="760">
 </picture>
 
 The screenshots are the real installer, showing output from a real install on the developer's machine (home folders
@@ -204,6 +217,8 @@ feeds GBOS's own streaming window. See [ARCHITECTURE](docs/ARCHITECTURE.md).
 * **The graphical installer is new.** Its read-only pages are tested, and every root step runs the same scripts as the
   command line, but no one has clicked through a whole clean install with it yet. If a step fails, its Output pane shows
   the command, so you can run it in a terminal.
+* **The phone setup step (`gb-phone-setup.sh`) is new** and has not yet been run against a phone. It does what was
+  done by hand on the developer's phone (install, grants, notification access), and reads every change back.
 * Only tested on one machine (a 13th-gen Intel laptop with an NVIDIA hybrid GPU). Reports from other hardware are welcome.
 
 The prebuilt Android binaries (`input-bridge`, `vpd-stub`, the optional GPU shim) are attached to each

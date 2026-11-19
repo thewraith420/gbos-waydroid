@@ -1,4 +1,4 @@
-# GBOS on Waydroid — v0.1.1-pre
+# GBOS on Waydroid — v0.1.2-pre
 
 Preview release. Run the Android 17 "Googlebook" system image inside Waydroid on an ordinary
 Linux PC, and link it to an Android phone with Phone Hub / App Cast.
@@ -12,24 +12,42 @@ install Waydroid for you.
 
 ## What's in this release
 
-- **Source** (`gbos-0.1.1-pre-src.tar.gz`): the whole repository, which includes the installer,
+- **Source** (`gbos-0.1.2-pre-src.tar.gz`): the whole repository, which includes the installer,
   recipe, native helpers, Android app sources, host services, the optional hybrid-GPU mode, the
   optional kernel add-ons, and the docs.
 - **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `vulkan.hybrid64.so`), byte-identical
-  to v0.1.0-pre. These save the installer from building them. `input-bridge` and `vpd-stub` are
+  to v0.1.0-pre and v0.1.1-pre. These save the installer from building them. `input-bridge` and `vpd-stub` are
   reproducible NDK r27c builds. The GPU shim is the exact binary tested on-device. All three
   match the committed [`prebuilt.sha256`](prebuilt.sha256), and the installer checks every
   download against it.
 
 ```sh
 installer/gbos-install.py fetch-prebuilt \
-  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.1-pre --dest DIR
+  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.2-pre --dest DIR
 ```
 
 If you'd rather not use them, build from source. `prepare --ndk auto` fetches the NDK and
 compares what it builds against the published checksums.
 
-## New since v0.1.0-pre
+## New since v0.1.1-pre
+
+- **Phone Hub works again after Google's Cross-Device Services update.** The app (`com.google.ambient.streaming`)
+  updated itself to 1.0.1387 on 2026-11-15, which renamed the obfuscated classes the link keeper and App Cast depend on.
+  The link never came up (the keeper logged `Gate forced 0 time(s)`), and App Cast either never opened its window or
+  crashed the app's garbage collector about 13 seconds into a cast. All names are updated; hooks are now pinned to their
+  argument types so a future rename fails with a warning instead of a crash; the keeper warns when the app's version is
+  not one the names are known for. TROUBLESHOOTING lists the known names and how to find new ones.
+- **A graphical installer** (`installer/gbos-installer-gui.py`, GTK 4 / libadwaita): one page per step, runs exactly
+  the documented commands and prints each one first; root steps ask for your password through polkit; the reset asks you
+  to type "reset". The README is now a screenshot tutorial of it.
+- **Phone setup in one step** (`host/phonehub/gb-phone-setup.sh`, and a page in the installer): over wireless debugging
+  (or USB) it installs the GBOS Cast companion app, grants its permissions, allows its notification access, optionally
+  turns on touch control, and reads every change back. New, not yet run against a phone.
+- **Codecs:** with `debug.stagefright.ccodec=0` (Waydroid's default on a desktop GPU, and on installs restored from
+  before v0.1.1) the codec list is empty, and casting from YouTube made Play services crash looking for an H.264 encoder,
+  which also took the phone link down. `try.sh` already sets it to 4; `gbos-doctor.py` flags it.
+
+## Earlier (v0.1.1-pre)
 
 The first clean end-to-end install turned up the following, and all of it is fixed:
 
@@ -62,7 +80,9 @@ sound, Wi-Fi, adb, and the widget.
 ## Not finished
 
 - **Pairing a phone and App Cast have not been re-tested from a clean install.** Both work on
-  the developer's long-running install.
+  the developer's long-running install (App Cast verified there after the Cross-Device Services fix).
+- **The graphical installer's root steps** have not been clicked through on a clean install; its read-only pages are
+  tested. The phone setup step has not been run against a phone.
 - **The optional hybrid-GPU mode** was not part of the clean run.
 - **Only one machine tested:** a 13th-gen Intel laptop with an NVIDIA hybrid GPU.
 

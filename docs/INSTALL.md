@@ -215,7 +215,25 @@ again after any reset of Waydroid's data. Details are at the top of the script.
 
 Then:
 
-1. Install the phone app (built into `W/gbcast_app/build/`) on the phone with `adb install`.
+1. Set up the phone over wireless debugging. On the phone turn on Developer options and **Wireless debugging** (same
+   Wi-Fi as the PC); its screen shows the phone's *IP address & Port*. The first time, also tap *Pair device with pairing
+   code*, which shows a 6-digit code and a second IP:port (both change each time that dialog opens). Then:
+
+   ```sh
+   host/phonehub/gb-phone-setup.sh --connect IP:PORT --pair PAIR_IP:PAIR_PORT --code 123456 --work $W   # first time
+   host/phonehub/gb-phone-setup.sh --connect IP:PORT --work $W                                          # afterwards
+   ```
+
+   `--check` only reports; `--no-accessibility` skips the optional part. A USB cable with USB debugging works too: leave
+   out `--connect`/`--pair`. The installer GUI has the same step ("Set up your phone").
+
+   It installs the phone app GBOS Cast (built into `W/gbcast_app/build/`, signed with your key), grants
+   `WRITE_SECURE_SETTINGS` (for its Re-arm button), `RECORD_AUDIO` and `POST_NOTIFICATIONS`, allows its notification
+   listener, optionally turns on its accessibility service (touch control; Advanced Protection blocks it, and the touch
+   agent below does the same job), opens it, and reads every change back. An existing copy signed with a different key
+   is kept, not removed. Then press **Re-arm touch forwarding** once in the app, with App Cast running on the PC; it
+   starts the touch agent, and is needed again only after the phone reboots. Wireless debugging can be switched off
+   afterwards; Re-arm turns it on by itself for a few seconds when it needs it.
 2. On the phone, turn on *Cross-device services* for the account GBOS is signed in with.
 3. In GBOS, open the Cross-device services popup and scan its QR code with the phone.
 4. Start casting from the phone app (it finds your PC on its own), or open App Cast in GBOS.
