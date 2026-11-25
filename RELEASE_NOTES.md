@@ -1,4 +1,4 @@
-# GBOS on Waydroid — v0.1.2-pre
+# GBOS on Waydroid — v0.1.3-pre
 
 Preview release. Run the Android 17 "Googlebook" system image inside Waydroid on an ordinary
 Linux PC, and link it to an Android phone with Phone Hub / App Cast.
@@ -12,24 +12,48 @@ install Waydroid for you.
 
 ## What's in this release
 
-- **Source** (`gbos-0.1.2-pre-src.tar.gz`): the whole repository, which includes the installer,
+- **Source** (`gbos-0.1.3-pre-src.tar.gz`): the whole repository, which includes the installer,
   recipe, native helpers, Android app sources, host services, the optional hybrid-GPU mode, the
   optional kernel add-ons, and the docs.
 - **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `vulkan.hybrid64.so`), byte-identical
-  to v0.1.0-pre and v0.1.1-pre. These save the installer from building them. `input-bridge` and `vpd-stub` are
+  to every earlier release. These save the installer from building them. `input-bridge` and `vpd-stub` are
   reproducible NDK r27c builds. The GPU shim is the exact binary tested on-device. All three
   match the committed [`prebuilt.sha256`](prebuilt.sha256), and the installer checks every
   download against it.
 
 ```sh
 installer/gbos-install.py fetch-prebuilt \
-  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.2-pre --dest DIR
+  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.3-pre --dest DIR
 ```
 
 If you'd rather not use them, build from source. `prepare --ndk auto` fetches the NDK and
 compares what it builds against the published checksums.
 
-## New since v0.1.1-pre
+## New since v0.1.2-pre
+
+- **The CPU-emulation add-on (`vexemu`) works again, and on distribution kernels.** Testing it on a stock Debian kernel found
+  three bugs, each of which stopped it for anyone not on the developer's own kernel:
+  - the upstream patch it downloads moved on 2026-11-12, so the download failed with 404. It is now pinned to a commit and
+    still checked against the same sha256;
+  - it included a header that only exists from kernel 6.17, so it did not compile on Debian 13 (6.12) or Ubuntu 24.04 (6.8);
+  - on kernels before 6.15 the task's FPU state is in a different place, and the module's own safety check refused to load.
+  It now passes its full emulation suite (`kernel/vexemu/test/test-qemu.sh`: 9002 instruction cases, 18 addressing cases,
+  run-ahead on and off) under QEMU as a CPU without those instructions, on Debian's stock 6.12.115 kernel and on 7.3.5.
+- **Kernel add-ons from the graphical installer.** When the check finds add-ons are needed, the check page builds and
+  installs them. If your kernel's headers are missing, it offers to install them first: the package for the running kernel,
+  plus the one that keeps them current with kernel updates (`linux-headers-amd64` on Debian, `kernel-devel` on Fedora,
+  `linux-headers` on Arch). It says up front when Secure Boot, lockdown or enforced module signatures would refuse the
+  unsigned modules, instead of failing halfway.
+- **`gbos-install.py addons`** finds the build files itself (`/lib/modules/$(uname -r)/build`), so `--tree` is only needed for
+  a self-built kernel, prints the headers package to install when they are missing, and has `--json` for front-ends.
+  `check --json` reports the same.
+- `kernel/README.md` has a Secure Boot section. `tools/test-addons-plan.sh` no longer depends on the test machine's own
+  kernel modules (3 cases failed on machines that have legacy iptables), and covers Debian's layout.
+
+## Earlier releases
+
+### v0.1.2-pre
+
 
 - **Phone Hub works again after Google's Cross-Device Services update.** The app (`com.google.ambient.streaming`)
   updated itself to 1.0.1387 on 2026-11-15, which renamed the obfuscated classes the link keeper and App Cast depend on.
@@ -47,7 +71,7 @@ compares what it builds against the published checksums.
   before v0.1.1) the codec list is empty, and casting from YouTube made Play services crash looking for an H.264 encoder,
   which also took the phone link down. `try.sh` already sets it to 4; `gbos-doctor.py` flags it.
 
-## Earlier (v0.1.1-pre)
+### v0.1.1-pre
 
 The first clean end-to-end install turned up the following, and all of it is fixed:
 
@@ -82,7 +106,10 @@ sound, Wi-Fi, adb, and the widget.
 - **Pairing a phone and App Cast have not been re-tested from a clean install.** Both work on
   the developer's long-running install (App Cast verified there after the Cross-Device Services fix).
 - **The graphical installer's root steps** have not been clicked through on a clean install; its read-only pages are
-  tested. The phone setup step has not been run against a phone.
+  tested. The phone setup step has not been run against a phone. The kernel add-on buttons were checked in staged
+  screenshots; the commands they run were tested from the command line.
+- **The kernel add-ons on real old hardware:** the only such test machine is retired. The emulation is tested under QEMU
+  (above); how fast GBOS runs on an old CPU is not known.
 - **The optional hybrid-GPU mode** was not part of the clean run.
 - **Only one machine tested:** a 13th-gen Intel laptop with an NVIDIA hybrid GPU.
 
@@ -90,7 +117,7 @@ sound, Wi-Fi, adb, and the widget.
 
 - **Recent CPU required.** The image uses GFNI, VAES, VPCLMULQDQ, AVX-VNNI and SHA-NI in its
   first boot processes. A 13th-gen Intel laptop works. An 8th-gen Pixel Slate failed immediately
-  (there is an optional emulation module, but it is slow and barely tested). `gbos-install.py
+  (the optional `vexemu` emulation module makes it start; it is slow, and its emulation is tested under QEMU). `gbos-install.py
   check` tells you before you download anything.
 - **Kernel.** Distro kernels have what's needed. A trimmed or custom kernel, or one with only
   AppArmor, may need a config rebuild or one of the optional loadable modules under `kernel/`.
