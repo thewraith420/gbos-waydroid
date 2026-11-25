@@ -22,7 +22,9 @@ commands on this page**, prints each one in the step's output pane before runnin
 * **Root:** steps that need root ask for your password through the system's polkit dialog (`pkexec`), once per step.
 * **The reset:** the destructive step (step 3) asks you to type `reset` first.
 * **Missing packages:** the check page shows the command to install them, with a button that runs it.
-* **Kernel add-ons** are still a command-line step, because they need your kernel's source or headers.
+* **Kernel add-ons:** if the check says some are needed, the check page builds and installs them. If your kernel's
+  headers are missing it offers to install them first (the package for the running kernel, plus the one that keeps them
+  current with kernel updates), and it says up front when Secure Boot or enforced module signatures would refuse them.
 * **Saved state:** your folders, choices and finished steps are kept in `~/.config/gbos/installer.json`, so you can close
   it and come back.
 
@@ -61,10 +63,14 @@ apply; each is a loadable module, **none needs a kernel rebuild**:
 | AppArmor is the only security module and the kernel lacks the cred_getsecid fix | `secctx` | binder cannot give keystore2 a caller context; boot stops at the boot animation |
 | the legacy iptables tables are missing | `netfilter` | Android has no network |
 
-Build whatever applies in one step (no root; `--tree` is the tree or linux-headers your **running** kernel was built from), then install what it prints:
+They are built against your **running** kernel's build files: `/lib/modules/$(uname -r)/build`, which the headers package
+provides on a distribution kernel (Debian, Fedora and Arch do not install it by default; Ubuntu does). `addons` prints the
+package to install if it is missing (`linux-headers-$(uname -r)` and `linux-headers-amd64` on Debian, `kernel-devel` on Fedora,
+`linux-headers` on Arch). For a self-built kernel, pass `--tree` with the folder it was built in. Build whatever applies in one step
+(no root), then install what it prints:
 
 ```sh
-installer/gbos-install.py addons --tree /path/to/kernel/tree --out ~/gbos/addons --build
+installer/gbos-install.py addons --out ~/gbos/addons --build         # --tree DIR for a self-built kernel
 sudo kernel/gbos-vexemu.py   install --out ~/gbos/addons/vexemu      # whichever it built; they verify again and refuse a mismatch
 sudo kernel/gbos-secctx.py   install --out ~/gbos/addons/secctx
 sudo kernel/gbos-netfilter-legacy.py install --out ~/gbos/addons/netfilter   # then reboot
@@ -73,6 +79,10 @@ installer/gbos-install.py check                                      # should no
 
 Details, limits and licensing: [kernel/README.md](../kernel/README.md); a worked example on an unsupported machine: [UNSUPPORTED-HARDWARE.md](UNSUPPORTED-HARDWARE.md).
 `try.sh` refuses to start on a CPU that needs `vexemu` before it is loaded, and warns about the binder problem.
+
+**After a kernel update** the add-ons must be built again for the new kernel (run the check again; it lists them as needed).
+**Secure Boot:** the add-ons are unsigned, so a kernel in lockdown or with enforced signatures refuses them; see
+[kernel/README.md, "Secure Boot"](../kernel/README.md#secure-boot).
 
 ## 2. Download and prepare
 

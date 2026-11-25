@@ -2,7 +2,7 @@
 """GBOS installer driver (bring your own image).
 
     gbos-install.py check [--json]                         preflight: tools, session, disk, kernel options, add-ons; prints one install command for missing packages
-    gbos-install.py addons  --tree KERNEL_TREE --out DIR   build the kernel add-on modules THIS machine needs (no root, no reboot of a build)
+    gbos-install.py addons  [--tree KERNEL_TREE] --out DIR --build   build the kernel add-on modules THIS machine needs (no root); --json for front-ends
     gbos-install.py fetch   --downloads DIR                download + verify every pinned input (resumable)
     gbos-install.py prepare --downloads DIR --work DIR     extract, patch and assemble the build folder
                             [--prebuilt DIR | --ndk DIR]
@@ -20,6 +20,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -351,10 +352,122 @@ def addons_plan(opts):
     return plan
 
 
+def _out(cmd):
+    """stdout of a command, or None if it failed or does not exist. No root needed for anything this is used for."""
+    exe = find_tool(cmd[0])
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe] + cmd[1:], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def apt_has(pkg):
+    out = _out(["apt-cache", "policy", pkg]) or ""
+    m = re.search(r"Candidate:\s*(\S+)", out)
+    return bool(m) and m.group(1) != "(none)"
+
+
+def headers_packages(pm, release):
+    """(packages, owner, note): the distro packages that provide the build files of kernel `release`, chosen from the
+    package that owns that kernel. owner None = no package owns it (a self-built kernel: there is nothing to install,
+    its own build tree is what the add-ons need). On Debian/Ubuntu the version-pinned package is for the kernel running
+    now, and the flavour metapackage (linux-headers-amd64, linux-headers-generic ...) makes headers follow kernel updates."""
+    if pm == "apt":
+        owner = _out(["dpkg-query", "-S", "/boot/vmlinuz-" + release])
+        if not owner:
+            return [], None, ""
+        pkgs, note = [], ""
+        exact = "linux-headers-" + release
+        if apt_has(exact):
+            pkgs.append(exact)
+        else:
+            note = ("%s is no longer offered by your package sources (this kernel is older than the newest one): update, "
+                    "reboot into the newest kernel, then run this again" % exact)
+        metas = _out(["dpkg-query", "-W", "-f", "${Package} ${Status}\n", "linux-image-*"]) or ""
+        for line in metas.splitlines():
+            name = line.split()[0]
+            if line.endswith("install ok installed") and not re.search(r"\d\.\d", name):
+                hdr = name.replace("linux-image-", "linux-headers-", 1)
+                if hdr not in pkgs and apt_has(hdr):
+                    pkgs.append(hdr)
+        return pkgs, owner.split(":")[0], note
+    if pm in ("dnf", "zypper"):
+        owner = _out(["rpm", "-qf", "--qf", "%{NAME}", "/lib/modules/%s/vmlinuz" % release])
+        if not owner:
+            return [], None, ""
+        base = owner[:-5] if owner.endswith("-core") else owner           # kernel-core -> kernel, kernel-rt-core -> kernel-rt
+        if pm == "dnf":
+            return [base + "-devel-" + release], owner, ""
+        return [base + "-devel"], owner, ""                               # openSUSE: kernel-default -> kernel-default-devel
+    if pm == "pacman":
+        owner = _out(["pacman", "-Qqo", "/usr/lib/modules/%s/vmlinuz" % release])
+        if not owner:
+            return [], None, ""
+        return [owner + "-headers"], owner, ""                            # linux -> linux-headers, linux-lts -> linux-lts-headers
+    return [], None, ""
+
+
+def secure_boot_state():
+    """True/False from the firmware's SecureBoot variable (readable without root), None if not an EFI boot / unknown."""
+    try:
+        with open("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", "rb") as f:
+            data = f.read()
+        return len(data) >= 5 and data[4] == 1
+    except OSError:
+        return None
+
+
+def module_load_blocker(opts):
+    """Why this kernel would refuse the (unsigned) add-on modules, or '' if it accepts them."""
+    if opts is not None and opts.get("MODULES") != "y":
+        return "this kernel has no loadable module support"
+    if opts is not None and opts.get("MODULE_SIG_FORCE") == "y":
+        return "this kernel only loads signed modules (CONFIG_MODULE_SIG_FORCE)"
+    try:
+        if open("/sys/module/module/parameters/sig_enforce").read().strip() == "Y":
+            return "this kernel only loads signed modules (module.sig_enforce)"
+    except OSError:
+        pass
+    try:
+        lock = re.search(r"\[(\w+)\]", open("/sys/kernel/security/lockdown").read())
+        if lock and lock.group(1) != "none":
+            return ("kernel lockdown is on (%s)%s, which refuses unsigned modules" %
+                    (lock.group(1), ", switched on by Secure Boot" if secure_boot_state() else ""))
+    except OSError:
+        pass
+    return ""
+
+
+def kernel_build_info(pm=None, release=None):
+    """Everything the add-on step needs to know before building: where the running kernel's build files are, what to
+    install if they are missing, and whether the kernel would load an unsigned module at all."""
+    release = release or os.uname().release
+    build = "/lib/modules/%s/build" % release
+    tree = os.path.realpath(build) if os.path.exists(os.path.join(build, "Makefile")) else None
+    have = lambda *f: tree is not None and all(os.path.exists(os.path.join(tree, x)) for x in f)
+    pkgs, owner, note = headers_packages(pm, release)
+    opts = kernel_options() if release == os.uname().release else None
+    return {"release": release, "tree": tree,
+            "tree_usable": have(".config", "Module.symvers", "include/generated/utsrelease.h"),
+            "tree_full": have("net/netfilter/x_tables.c"),   # the netfilter add-on rebuilds x_tables from source
+            "distro_kernel": owner is not None, "kernel_package": owner,
+            "headers_packages": pkgs, "headers_note": note or None,
+            "headers_install": PKG_INSTALL.get(pm, "sudo apt install") + " " + " ".join(pkgs) if pkgs else None,
+            "secure_boot": secure_boot_state(), "load_blocker": module_load_blocker(opts) or None}
+
+
 def cmd_addons(a):
     """Build the kernel add-on modules this machine needs (the build is unprivileged); print the root commands to install them."""
     opts = kernel_options()
     plan = addons_plan(opts)
+    if a.json:
+        info = kernel_build_info(package_manager())
+        info["needed"] = [{"key": k, "script": "kernel/" + s, "why": w, "cannot_build": p or None} for k, s, w, p in plan]
+        print(json.dumps(info, indent=2))
+        return 0
     if not plan:
         say("nothing to add: this machine's CPU, security modules and netfilter tables need no GBOS kernel add-on "
             "(or they are already installed and loaded).")
@@ -365,13 +478,28 @@ def cmd_addons(a):
         if prob:
             say("             CANNOT be built as a module here: %s" % prob)
     todo = [p for p in plan if not p[3]]
+    info = kernel_build_info(package_manager())
+    if info["load_blocker"]:
+        say("")
+        say("these add-ons are unsigned modules, and %s: they would not load. See kernel/README.md, \"Secure Boot\"." % info["load_blocker"])
+    tree = a.tree or info["tree"]
+    if not tree:
+        say("")
+        if info["headers_install"]:
+            say("the build files of your running kernel are not installed. Install them (this also keeps them up to date with kernel updates):")
+            say("    " + info["headers_install"])
+        elif info["distro_kernel"]:
+            say("the build files of your running kernel are not installed%s." % (": " + info["headers_note"] if info["headers_note"] else ""))
+        else:
+            say("no package owns this kernel (self-built?): pass --tree, the folder it was built in.")
     if not a.build:
         say("")
-        say("to build them (no root needed; --tree is the tree or linux-headers your RUNNING kernel was built from):")
-        say("    gbos-install.py addons --tree /path/to/kernel/tree --out ~/gbos/addons --build")
+        say("to build them (no root needed; --tree defaults to /lib/modules/%s/build):" % info["release"])
+        say("    gbos-install.py addons --out ~/gbos/addons --build")
         return 0
-    if not a.tree or not a.out:
-        die("--build needs --tree and --out")
+    if not tree or not a.out:
+        die("--build needs --out, and --tree when /lib/modules/%s/build is missing" % info["release"])
+    a.tree = tree
     out = os.path.abspath(a.out)
     if out.startswith(ROOT + os.sep):
         die("--out must be outside the repository")
@@ -699,6 +827,7 @@ def cmd_check(a):
                "kernel": os.uname().release, "package_manager": pm,
                "missing_packages": {"build": build_pkgs, "phonehub": ph_pkgs}, "install_command": install,
                "addons_needed": [{"key": k, "script": "kernel/" + s, "why": w, "cannot_build": p or None} for k, s, w, p in plan],
+               "kernel_build": kernel_build_info(pm) if plan else None,
                "checks": rep.items}
         print(json.dumps(out, indent=2))
     return 1 if bad else 0
@@ -1171,10 +1300,11 @@ def main():
     g.add_argument("--prebuilt", help="directory with the prebuilt Android binaries (input-bridge, vpd-stub) from `fetch-prebuilt`")
     g.add_argument("--ndk", help="Android NDK r27c directory, or 'auto' to unpack the one fetched with --with-ndk")
     ad = sub.add_parser("addons", help="build the kernel add-on modules this machine needs (CPU emulation, binder security context, legacy iptables)")
-    ad.add_argument("--tree", help="the tree (or linux-headers) the RUNNING kernel was built from")
+    ad.add_argument("--tree", help="the tree (or linux-headers) the RUNNING kernel was built from (default: /lib/modules/RELEASE/build)")
     ad.add_argument("--out", help="where to put the builds (outside the repository)")
     ad.add_argument("--build", action="store_true", help="build them (default: only say which are needed)")
     ad.add_argument("--allow-other", action="store_true", help="build for a kernel that is not the one running here")
+    ad.add_argument("--json", action="store_true", help="print what is needed, where the build files are, what to install, and whether modules would load (for the GUI)")
     kf = sub.add_parser("kernel-fragment", help="print the kernel config options GBOS needs, for building your own kernel")
     kf.add_argument("--all", action="store_true", help="include the optional ones (ipvlan, virtual Bluetooth, ...)")
     kf.add_argument("--base", help="your current .config: print only the options it is missing")

@@ -49,7 +49,8 @@ run yourself), then the check runs again. Carry on when it says **Ready to insta
   <img alt="The check page listing two missing packages with Copy and Install buttons" src="assets/screenshots/01-check-missing-light.png" width="760">
 </picture>
 
-If the check says a **kernel add-on** is needed, that one is a terminal step:
+If the check says a **kernel add-on** is needed (an older CPU, or some custom kernels), the same page builds and installs it,
+and installs your kernel's headers first if they are missing:
 [INSTALL.md, kernel add-ons](docs/INSTALL.md#kernel-add-ons-only-if-check-says-needed-here).
 
 ### 2. Download

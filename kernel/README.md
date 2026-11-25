@@ -54,8 +54,26 @@ Undo: `sudo kernel/gbos-netfilter-legacy.py uninstall`, then reboot.
 ---
 
 **Not sure which of these your machine needs?** `installer/gbos-install.py check` has a "kernel add-ons" section that says, and
-`installer/gbos-install.py addons --tree <tree> --out <dir> --build` builds exactly those (the install commands are printed for you to run as root).
-The detection is covered by `tools/test-addons-plan.sh`.
+`installer/gbos-install.py addons --out <dir> --build` builds exactly those (the install commands are printed for you to run as root;
+the graphical installer runs both from its check page). The build files default to `/lib/modules/$(uname -r)/build`; when they
+are missing, `addons` names the headers package to install. The detection is covered by `tools/test-addons-plan.sh`.
+
+## Secure Boot
+
+All three add-ons are **unsigned** modules. A kernel refuses them when:
+
+* it is in **lockdown** (`cat /sys/kernel/security/lockdown` shows `[integrity]` or `[confidentiality]`). Debian, Ubuntu and Fedora
+  switch lockdown on automatically when the machine boots with Secure Boot;
+* it enforces module signatures (`CONFIG_MODULE_SIG_FORCE=y`, or `module.sig_enforce=1` on the kernel command line).
+
+`check`, `addons --json` and the graphical installer detect both and say so before building anything. The ways around it, from
+simplest: turn Secure Boot off in the firmware settings; or sign the modules with your own key and enroll it (`mokutil --import`,
+a reboot and the blue MOK screen), the way DKMS signs third-party drivers. GBOS does not automate signing yet.
+
+**Tested builds:** `vexemu` and `secctx` build and pass their self-checks against Debian 13's 6.12 headers and a 7.3 custom kernel.
+`vexemu` also passes its full emulation suite (`kernel/vexemu/test/test-qemu.sh`: 9002 instruction cases, 18 addressing cases,
+run-ahead on and off, each first confirmed to fault without the module) under QEMU as a Skylake CPU, on Debian's stock
+6.12.115 kernel and on 7.3.5. Kernels before 6.15 keep the task's FPU state in a different place; the module handles both.
 
 ---
 

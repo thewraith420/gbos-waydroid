@@ -37,7 +37,8 @@ import subprocess
 import sys
 import urllib.request
 
-PATCH_URL = "https://raw.githubusercontent.com/alesimula/project-churro/main/kmod/patches/vex-emulate.patch"
+# pinned to a commit: a branch URL broke when upstream moved the file (2026-11-12, now under kmod/patches/6.18/)
+PATCH_URL = "https://raw.githubusercontent.com/alesimula/project-churro/5ab6a61282623971dbf92e81f3687d3eb15d1a2a/kmod/patches/vex-emulate.patch"
 PATCH_SHA256 = "d8decdcffc7a87aea0386ec3ca8476e607f5a26f0ef127e4f051f65ab84e8e0f"
 MATH_SHA256 = "d58d7fced360f3781e0d2b3dd61d74e67f00671e0a22a9173b7d86be9967568c"   # of the extracted text, below
 MOD = "gbos_vexemu"
@@ -53,7 +54,7 @@ def P(p):
 
 
 def die(msg):
-    sys.exit("gbos-vexemu: " + msg)
+    sys.exit("%s: %s" % (os.path.basename(sys.argv[0]).replace(".py", ""), msg))     # gbos-secctx.py reuses this
 
 
 def say(msg):

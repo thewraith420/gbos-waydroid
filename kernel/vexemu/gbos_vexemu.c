@@ -13,6 +13,7 @@
  * third-party patch at build time. See ../README.md.
  */
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/kdebug.h>
 #include <linux/uaccess.h>
 #include <linux/sched.h>
@@ -22,7 +23,11 @@
 #include <asm/fpu/types.h>
 #include <asm/processor.h>
 #include <asm/cpufeature.h>
+#if __has_include(<asm/cpuid/api.h>)	/* 6.17+ */
 #include <asm/cpuid/api.h>
+#elif __has_include(<asm/cpuid.h>)	/* 6.x before 6.17 */
+#include <asm/cpuid.h>
+#endif					/* older: cpuid_count() is in <asm/processor.h> */
 #include <asm/traps.h>
 #include <asm/ptrace.h>
 
@@ -114,8 +119,12 @@ static void v_write(struct xregs_state *xs, int n, const u32 *v, bool y, bool le
 
 static inline struct fpu *task_fpu(struct task_struct *t)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
 	/* same formula as the kernel's x86_task_fpu(): the fpu sits right behind task_struct */
 	return (struct fpu *)((void *)t + sizeof(*t));
+#else
+	return &t->thread.fpu;			/* before 6.15 it was embedded in thread_struct */
+#endif
 }
 
 /* ---- decoder ---- */

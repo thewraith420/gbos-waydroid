@@ -54,7 +54,7 @@ STATUS_ICON = {"ok": ("object-select-symbolic", "success"), "warn": ("dialog-war
 
 DEFAULTS = {"downloads": str(HOME / "gbos" / "dl"), "work": str(HOME / "gbos" / "work"),
             "backups": str(HOME / "gbos" / "backups"), "source": "prebuilt", "phone_hub": True, "bluetooth": False,
-            "phone_accessibility": True, "phone_addr": "",
+            "phone_accessibility": True, "phone_addr": "", "addons": str(HOME / "gbos" / "addons"), "kernel_tree": "",
             "done": {}}
 
 
@@ -195,13 +195,17 @@ class Page:
             self.results.remove(c)
 
 
-def status_row(title, subtitle, status):
-    row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(subtitle or ""))
-    row.set_subtitle_selectable(True)
+def status_icon(status):
     icon_name, css = STATUS_ICON.get(status, STATUS_ICON["info"])
     icon = Gtk.Image.new_from_icon_name(icon_name)
     icon.add_css_class(css)
-    row.add_prefix(icon)
+    return icon
+
+
+def status_row(title, subtitle, status):
+    row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(subtitle or ""))
+    row.set_subtitle_selectable(True)
+    row.add_prefix(status_icon(status))
     return row
 
 
@@ -532,9 +536,11 @@ class Window(Adw.ApplicationWindow):
                 return
             ready = d.get("result") == "ready"
             banner = Adw.PreferencesGroup()
-            banner.add(status_row("Ready to install" if ready else "%d problem(s) to fix first" % d.get("problems", 0),
+            addons = bool(d.get("addons_needed"))
+            banner.add(status_row(("Ready, once the kernel add-ons below are in" if addons else "Ready to install") if ready
+                                  else "%d problem(s) to fix first" % d.get("problems", 0),
                                   "kernel %s, package manager %s" % (d.get("kernel"), d.get("package_manager") or "unknown"),
-                                  "ok" if ready else "fail"))
+                                  ("warn" if addons else "ok") if ready else "fail"))
             p.results.append(banner)
             pkgs = d["missing_packages"]["build"] + d["missing_packages"]["phonehub"]
             if pkgs:
@@ -555,14 +561,7 @@ class Window(Adw.ApplicationWindow):
                 g.add(row)
                 p.results.append(g)
             if d.get("addons_needed"):
-                g = Adw.PreferencesGroup(title="Kernel add-ons needed",
-                                         description="Loadable modules, no kernel rebuild. Building them needs your kernel's "
-                                                     "source or headers, so it is a command-line step: docs/INSTALL.md, "
-                                                     "\"Kernel add-ons\".")
-                for a in d["addons_needed"]:
-                    g.add(status_row(a["key"], a["why"] + (" (cannot build here: %s)" % a["cannot_build"] if a.get("cannot_build") else ""),
-                                     "fail"))
-                p.results.append(g)
+                p.results.append(self.addons_group(p, d))
             sections = {}
             for c in d["checks"]:
                 sections.setdefault(c["section"], []).append(c)
@@ -576,7 +575,7 @@ class Window(Adw.ApplicationWindow):
                     ex.add_row(status_row(c["name"], c.get("detail", ""), c["status"]))
                 g.add(ex)
             p.results.append(g)
-            self.mark(p, True if ready else "failed")
+            self.mark(p, True if ready and not addons else "failed")
             p.expander.set_expanded(not ready and not pkgs)
 
         def go(_b):
@@ -585,6 +584,113 @@ class Window(Adw.ApplicationWindow):
                      mark=False)
         p.run_button.connect("clicked", go)
         return p
+
+    def addons_group(self, p, d):
+        """Kernel add-ons, shown on the Check page only when this machine needs some: install the running kernel's
+        headers if they are missing, then build each add-on as you and install it as root. Re-runs the check after."""
+        kb = d.get("kernel_build") or {}
+        pm = d.get("package_manager")
+        needed = d["addons_needed"]
+        g = Adw.PreferencesGroup(title="Kernel add-ons needed",
+                                 description="Small loadable modules that add what this kernel lacks, with no kernel rebuild. "
+                                             "They are built here against your running kernel's build files.")
+        for a in needed:
+            g.add(status_row(a["key"], a["why"] + (" (cannot be added as a module: %s)" % a["cannot_build"] if a.get("cannot_build") else ""),
+                             "fail"))
+        if kb.get("load_blocker"):
+            g.add(status_row("This kernel would refuse them",
+                             "%s. The add-ons are unsigned modules. kernel/README.md, \"Secure Boot\", explains the choices."
+                             % (kb["load_blocker"][0].upper() + kb["load_blocker"][1:]), "fail"))
+            return g
+        own = self.cfg.get("kernel_tree") or ""
+        tree = own or kb.get("tree")
+        if not tree:
+            if kb.get("headers_packages") and pm in PKG_RUN:
+                row = Adw.ActionRow(title="Your kernel's build files (headers) are not installed",
+                                    subtitle=GLib.markup_escape_text("Installs " + " ".join(kb["headers_packages"]) +
+                                                                     ". The second keeps them up to date with kernel updates."
+                                                                     if len(kb["headers_packages"]) > 1 else
+                                                                     "Installs " + kb["headers_packages"][0] + "."))
+                row.add_prefix(status_icon("warn"))
+                inst = Gtk.Button(label="Install headers", valign=Gtk.Align.CENTER)
+                inst.add_css_class("suggested-action")
+                inst.connect("clicked", lambda _b: self.run(p, [Cmd(argv=PKG_RUN[pm] + kb["headers_packages"], root=True)],
+                                                           then=lambda: p.run_button.emit("clicked"), mark=False))
+                row.add_suffix(inst)
+                g.add(row)
+                if kb.get("headers_note"):
+                    g.add(status_row("Note", kb["headers_note"], "warn"))
+                return g
+            if kb.get("distro_kernel"):
+                g.add(status_row("Your kernel's build files are not installed",
+                                 kb.get("headers_note") or "No headers package was found for it.", "fail"))
+                return g
+            g.add(status_row("No package owns this kernel (self-built?)",
+                             "Choose the folder it was built in: it has .config and Module.symvers.", "warn"))
+        g.add(self.tree_row(kb.get("tree")))
+        if not tree:
+            return g
+        todo = [a for a in needed if not a.get("cannot_build")]
+        if any(a["key"] == "netfilter" for a in todo) and not (kb.get("tree_full") or own):
+            g.add(status_row("netfilter needs the full source tree",
+                             "It rebuilds x_tables from source, which headers do not include. Choose the folder the kernel "
+                             "was built in to add it.", "warn"))
+            todo = [a for a in todo if a["key"] != "netfilter"]
+        if not todo:
+            return g
+        out = Path(self.cfg.get("addons") or HOME / "gbos" / "addons")
+        names = ", ".join(a["key"] for a in todo)
+        row = Adw.ActionRow(title=GLib.markup_escape_text("Build and install " + names),
+                            subtitle=GLib.markup_escape_text("Builds as you into %s, checks each module against the running "
+                                                             "kernel, then installs it and loads it at every boot (asks for "
+                                                             "your password)%s." % (out, "; netfilter needs a reboot afterwards"
+                                                             if any(a["key"] == "netfilter" for a in todo) else "")))
+        btn = Gtk.Button(label="Build and install", valign=Gtk.Align.CENTER)
+        btn.add_css_class("suggested-action")
+
+        def go(_b):
+            cmds = [Cmd(argv=[sys.executable, str(REPO / a["script"]), "build", "--tree", tree, "--out", str(out / a["key"])])
+                    for a in todo]
+            cmds.append(Cmd(root=True, script="\n".join("%s install --out %s" % (shlex.quote(str(REPO / a["script"])),
+                                                                                    shlex.quote(str(out / a["key"]))) for a in todo)))
+            reboot = any(a["key"] == "netfilter" for a in todo)
+
+            def after():
+                if reboot:
+                    self.toast("Installed. Reboot before starting Waydroid: netfilter replaces modules in use")
+                p.run_button.emit("clicked")
+            self.run(p, cmds, then=after, mark=False)
+        btn.connect("clicked", go)
+        row.add_suffix(btn)
+        g.add(row)
+        return g
+
+    def tree_row(self, found):
+        """The kernel build folder: found automatically (/lib/modules/RELEASE/build), or chosen for a self-built kernel."""
+        row = Adw.ActionRow(title="Kernel build folder",
+                            subtitle=GLib.markup_escape_text(self.cfg.get("kernel_tree") or
+                                                             ("%s (found automatically)" % found if found else "not found")))
+        btn = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Choose the folder your kernel was built in")
+        btn.add_css_class("flat")
+
+        def chosen(dlg, res):
+            try:
+                f = dlg.select_folder_finish(res)
+            except GLib.Error:
+                return
+            self.cfg["kernel_tree"] = f.get_path()
+            save_config(self.cfg)
+            self.pages[0].run_button.emit("clicked")
+
+        btn.connect("clicked", lambda _b: Gtk.FileDialog(title="Kernel build folder").select_folder(self, None, chosen))
+        row.add_suffix(btn)
+        if self.cfg.get("kernel_tree"):
+            reset = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Find it automatically again")
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda _b: (self.cfg.pop("kernel_tree", None), save_config(self.cfg),
+                                                 self.pages[0].run_button.emit("clicked")))
+            row.add_suffix(reset)
+        return row
 
     def page_download(self):
         p = Page(self, "download", "Download",
