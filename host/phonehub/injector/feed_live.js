@@ -414,9 +414,8 @@ function findExportSub(modName, exact, sub){
 var INIT_SUB = 'MotionEvent10initialize';
 var INIT_EXACT = '_ZN7android11MotionEvent10initializeEiijNS_2ui16LogicalDisplayIdENSt3__15arrayIhLm32EEEiiNS_3ftl5FlagsINS_10MotionFlagEEEiiiNS_20MotionClassificationERKNS1_9TransformEffffSD_llmPKNS_17PointerPropertiesEPKNS_13PointerCoordsE';
 var ACTION_OFF = 0x38;   // verified: tap -> [0, 1], swipe -> [0, 2, 2, …, 1]
-// Our window's screen origin, and therefore the exact raw offset every event delivered to it
-// carries (measured: a tap at screen 960,600 arrives as offset -772,-80 and cooked 188,520).
-// MUST match the `am task resize <tid> 772 80 1148 960` in appcast_session.py.
+// Our window's screen origin & size, initialized to the `am task resize` defaults and updated dynamically
+// every 500ms by watchSurface() as the user drags or resizes the freeform window.
 var WIN_X = 772, WIN_Y = 80, WIN_W = 376, WIN_H = 880;
 
 function installDispatchHooks(){
@@ -454,12 +453,11 @@ function installDispatchHooks(){
           if(action===2 || action===3){ if(!LIVE_ON) return; }
           else if(action!==0 && action!==1 && action!==5 && action!==6 && action!==8) return;
 
-          // Window identity: the raw offset is the window origin, so an event that carries
-          // exactly our task's origin is ours, whatever else ambient may have on screen.
-          // On bare-metal fullscreen (e.g. Pixel Slate), ox=0, oy=0 while SV_FOCUSED is true.
+          // Window identity: the raw offset is -windowOrigin, so an event carrying (-WIN_X,-WIN_Y)
+          // belongs to our window as watchSurface() tracks drags/resizes. Fullscreen fallback keeps (0,0) when focused.
           var ox = getOffXFn(ev), oy = getOffYFn(ev);
-          var isFreeformWin = (Math.abs(ox + WIN_X) <= 1 && Math.abs(oy + WIN_Y) <= 1);
-          var isFullscreenWin = (SV_FOCUSED && Math.abs(ox) <= 1 && Math.abs(oy) <= 1);
+          var isFreeformWin = ((WIN_X !== 0 || WIN_Y !== 0) && Math.abs(ox + WIN_X) <= 2 && Math.abs(oy + WIN_Y) <= 2);
+          var isFullscreenWin = (SV_FOCUSED && Math.abs(ox) <= 2 && Math.abs(oy) <= 2);
           var mine = isFreeformWin || isFullscreenWin;
           // cooked = window-local (VERIFIED against an injected tap).
           var x0 = getAxisFn(ev, 0, 0), y0 = getAxisFn(ev, 1, 0);
@@ -474,8 +472,8 @@ function installDispatchHooks(){
           // A live gesture's MOVE/UP may legitimately end outside the window (finger dragged off the edge):
           // dropping those would leave the phone's finger down, so they are let through (and clamped).
           var liveTail = LIVE_ON && (action===1 || action===2 || action===3 || action===6);
-          var boundW = isFullscreenWin ? Math.max(WIN_W, SV_W) : WIN_W;
-          var boundH = isFullscreenWin ? Math.max(WIN_H, SV_H + SV_TOP) : WIN_H;
+          var boundW = Math.max(WIN_W, SV_W);
+          var boundH = Math.max(WIN_H, SV_H + SV_TOP);
           if(!liveTail && (x0 < -2 || y0 < -2 || x0 > boundW + 2 || y0 > boundH + 2)) return;
 
           // Pointer index 1 may ONLY be read when the action proves a second pointer exists:
@@ -1170,8 +1168,31 @@ function watchSurface(sv){
                 SV_FOCUSED=!!ac.hasWindowFocus();
                 var dv=ac.getWindow().getDecorView();
                 if(dv){
-                  var dh=dv.getHeight();
+                  var dh=dv.getHeight(), dw=dv.getWidth();
                   if(dh>SV_H && SV_H>0) SV_TOP=dh-SV_H;
+                  var lx=0, ly=0;
+                  try{
+                    var loc=Java.array('int',[0,0]);
+                    dv.getLocationOnScreen(loc);
+                    lx=loc[0]; ly=loc[1];
+                  }catch(eLoc){}
+                  if(lx===0 && ly===0){
+                    try{
+                      var b=ac.getResources().getConfiguration().windowConfiguration.value.getBounds();
+                      if(b.left.value!==0 || b.top.value!==0){ lx=b.left.value; ly=b.top.value; }
+                      if(dw<=0 || dh<=0){ dw=b.width(); dh=b.height(); }
+                    }catch(eCfg){
+                      try{
+                        var b2=ac.getWindowManager().getCurrentWindowMetrics().getBounds();
+                        if(b2.left.value!==0 || b2.top.value!==0){ lx=b2.left.value; ly=b2.top.value; }
+                        if(dw<=0 || dh<=0){ dw=b2.width(); dh=b2.height(); }
+                      }catch(eWm){}
+                    }
+                  }
+                  if(dw>0 && dh>0 && (lx!==WIN_X || ly!==WIN_Y || dw!==WIN_W || dh!==WIN_H)){
+                    WIN_X=lx; WIN_Y=ly; WIN_W=dw; WIN_H=dh;
+                    log('LIVE','window geometry -> ('+WIN_X+','+WIN_Y+') '+WIN_W+'x'+WIN_H+' sv='+SV_W+'x'+SV_H+' top='+SV_TOP);
+                  }
                 }
               }
               if(OUR_RECEIVER_PTR===null){
