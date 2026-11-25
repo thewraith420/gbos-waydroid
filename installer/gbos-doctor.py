@@ -119,17 +119,22 @@ def check_host(a):
             "host", "%s %s" % (t, "found" if shutil.which(t) else "not found"),
             "install it (adb: docs/TUTORIAL-adb.md)")
     if not shutil.which("jdb"):
-        warn("host", "jdb not found: the Phone Hub link keeper needs a JDK", "sudo apt install default-jdk-headless")
+        warn("host", "jdb not found: the Phone Hub link keeper uses it only on images without the virtual lid switch "
+             "(waydroid_lid)", "sudo apt install default-jdk-headless")
     st = os.environ.get("XDG_SESSION_TYPE")
     if st and st != "wayland":
         warn("host", "session type is %s; Waydroid draws into a Wayland window" % st, "log in to a Wayland session")
     if not (os.path.exists(P("/dev/binderfs")) or loaded_module("binder_linux") or loaded_module("binder") or
             any(n.startswith("binder") for n in (os.listdir(P("/dev")) if os.path.isdir(P("/dev")) else []))):
         warn("host", "no binder device found", "sudo modprobe binder_linux  (or load your kernel's binder support)")
-    rule = "/etc/udev/rules.d/99-waydroid-input-ignore.rules"
-    (ok if os.path.exists(P(rule)) else warn)("host", "udev rule that hides Waydroid's virtual input devices from the desktop: " +
-                                              ("present" if os.path.exists(P(rule)) else "missing"),
-                                              "it is installed by try.sh")
+    rule, old = "/etc/udev/rules.d/65-waydroid-input-ignore.rules", "/etc/udev/rules.d/99-waydroid-input-ignore.rules"
+    if os.path.exists(P(rule)):
+        ok("host", "udev rule that hides Waydroid's virtual input devices from the desktop: present")
+    elif os.path.exists(P(old)):
+        warn("host", "udev rule for Waydroid's virtual input devices is the old 99- version, which lets systemd-logind "
+             "watch waydroid_lid as a lid switch", "re-run try.sh (it installs 65-waydroid-input-ignore.rules)")
+    else:
+        warn("host", "udev rule that hides Waydroid's virtual input devices from the desktop: missing", "it is installed by try.sh")
     conf = read("/etc/modules-load.d/waydroid-iptables.conf")
     if conf is None:
         warn("host", "legacy iptables modules are not set to load at boot", "try.sh writes /etc/modules-load.d/waydroid-iptables.conf")
@@ -328,6 +333,13 @@ def check_live(a):
     notif = A("dumpsys notification --noredact | grep -A 30 'pkg=com.google.ambient.streaming .*id=1 tag=null' | grep 'android.title=String (Connected)'", 20)
     (ok if notif else warn)("android", "Cross-device link to the phone: %s" % ("connected" if notif else "not connected"),
                             "" if notif else "docs/TROUBLESHOOTING.md#phone-hub")
+    base_state = A("dumpsys device_state 2>/dev/null | grep -E 'mBaseState=Optional\\[DeviceState\\{identifier=(2|3),'", 10)
+    (ok if base_state else warn)(
+        "android",
+        "Base device state: OPEN/TABLET (native waydroid_lid)" if base_state
+        else "Base device state is CLOSED; update input-bridge for native waydroid_lid",
+        "" if base_state else "docs/TROUBLESHOOTING.md#phone-hub",
+    )
     # The input bridge declares a fixed pointer/touch range (default 1920x1080). On any other screen the cursor and
     # touches land in the wrong place until persist.gbos.display matches `wm size`.
     wm = A("wm size")

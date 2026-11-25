@@ -64,6 +64,7 @@ from pathlib import Path
 import frida
 import frida_tools
 import phone_rearm  # agent-port probe shared with the re-arm server (script dir is on sys.path)
+import resolve_cds_names  # pure-Python DEX resolver for com.google.ambient.streaming R8 names
 
 APPDIR = Path(__file__).resolve().parent
 BRIDGES = Path(frida_tools.__file__).parent / "bridges"
@@ -218,18 +219,7 @@ def _parse_touch_port(out):
 
 def probe_touch_injector(phone_ip, token):
     """Port of a live touch injector already running on the phone, or None. It answers "pong"."""
-    for p in range(8110, 8130):
-        try:
-            s = socket.create_connection((phone_ip, p), timeout=0.4)
-            s.settimeout(0.6)
-            s.sendall((token + " ping\n").encode())
-            if s.recv(16).startswith(b"pong"):
-                s.close()
-                return p
-            s.close()
-        except OSError:
-            pass
-    return None
+    return phone_rearm.probe_touch_injector(phone_ip, token)
 
 
 def ensure_touch_injector(pixel, phone_ip, token, allow_ip):
@@ -436,6 +426,14 @@ class Rig:
         bundle = load_apps_bundle()
         if bundle:
             parts.append(f"globalThis.GB_APPS={bundle};")
+        # Resolve R8-obfuscated Cross-Device Services class/method names for the installed APK version;
+        # inject into the shared scope so scripts survive app updates without manual name hunting.
+        try:
+            cds_names = resolve_cds_names.resolve_for_container(getattr(self, "serial", None))
+            parts.append(f"globalThis.GB_CDS_NAMES={json.dumps(cds_names)};")
+            log(f"CDS symbols resolved for versionCode={cds_names.get('versionCode', '?')}: gate={cds_names.get('gate')} display={cds_names.get('display')}")
+        except Exception as e:
+            log(f"WARN: CDS name resolution failed ({e}); using built-in 1.0.1392 defaults")
         for name in SCRIPTS:
             parts.append(f"// ====================== {name} ======================")
             parts.append((APPDIR / name).read_text())
@@ -722,9 +720,8 @@ def main():
                     nonlocal active_phone_ip, active_input_port
                     if not new_ip or not args.input_agent:
                         return
-                    detected_port = phone_rearm.check_alive_agent(new_ip, agent_token, args.phone_input_port)
-                    if not detected_port:
-                        detected_port = 8099
+                    agent_alive = phone_rearm.check_alive_agent(new_ip, agent_token, args.phone_input_port)
+                    detected_port = agent_alive or 8099
 
                     pidfile = Path(gbos_env.run_path("gb-input-relay.pid"))
                     need_spawn = True
@@ -763,7 +760,10 @@ def main():
                         pidfile.write_text(str(p_rel.pid))
                         active_phone_ip = new_ip
                         active_input_port = detected_port
-                        log(f"dynamically bound gestures to phone {new_ip}:{detected_port}")
+                        if agent_alive:
+                            log(f"dynamically bound gestures to phone {new_ip}:{detected_port}")
+                        else:
+                            log(f"phone gesture agent not reachable on {new_ip} yet — tap 'Re-arm touch forwarding' in GBOS Cast on the phone (relay listening on :8100 -> {new_ip}:{detected_port})")
 
                     # Ensure re-arm server is running
                     rearm_running = False

@@ -108,9 +108,11 @@ for try in 1 2 3 4 5 6; do
     sleep 3
 done
 
-# Fake lid sensor state: containers report lid closed (state 0) which pauses nearby sharing & cross-device services.
-# Set device state to OPEN (state 2).
-cmd device_state state 2 2>/dev/null || true
+# Fake lid sensor state if base state is not already OPEN (2) or TABLET (3) (e.g. without waydroid_lid):
+# avoids triggering unnecessary device_state overrides when the virtual SW_LID=0 switch already provides base OPEN.
+if ! dumpsys device_state 2>/dev/null | grep -qE 'mBaseState=Optional\[DeviceState\{identifier=(2|3),'; then
+    cmd device_state state 2 2>/dev/null || true
+fi
 
 # Start wallpaper & theme sync daemon so User 0 (Keyguard / Lockscreen) mirrors User 10's wallpaper & Monet style.
 DAEMON=""

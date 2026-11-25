@@ -276,5 +276,5 @@ Only for Intel + NVIDIA machines: [gpu/README.md](../gpu/README.md). Run `gpu/gb
 host/install-host.sh phonehub --remove
 sudo host/install-host.sh system lan wifi bt --remove
 sudo gpu/gbos-gpu disable --purge                     # if you enabled it
-sudo rm /etc/udev/rules.d/99-waydroid-input-ignore.rules /etc/modules-load.d/waydroid-iptables.conf
+sudo rm -f /etc/udev/rules.d/65-waydroid-input-ignore.rules /etc/udev/rules.d/99-waydroid-input-ignore.rules /etc/modules-load.d/waydroid-iptables.conf
 ```

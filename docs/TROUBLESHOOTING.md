@@ -63,26 +63,33 @@ the Cross-device link, the cast session and the listening ports in one screen.
 | Picture works, clicks do nothing | the phone-side gesture agent died (the phone rebooted) | press *Re-arm* in the phone app (wireless debugging on), or restart the cast |
 | Everything stalls while a host job runs | memory pressure: Android's killer removes Play services and the cast app | stop heavy host jobs while casting; see Memory below |
 | Sound from the phone is missing | `gb-audio` not running, or the phone app's audio is off | `systemctl --user status gb-audio` (port 8101) |
-| Cross-device never connects; the keeper's log repeats `Gate forced 0 time(s)` | the Cross-Device Services app (`com.google.ambient.streaming`) updated itself and its obfuscated class names changed, so the keeper's debugger breakpoint lands on nothing (`$XDG_RUNTIME_DIR/gbos/hub-link/out` says `Unable to set deferred breakpoint`) | find the new names as below and set them; the keeper also logs a warning when the app's version is not the one the names are known for |
+| Cross-device never connects; the keeper's log repeats `Gate forced 0 time(s)` | on legacy images without `waydroid_lid` (`mBaseState=CLOSED`), the Cross-Device Services app (`com.google.ambient.streaming`) updated itself and its obfuscated class names changed, so the keeper's debugger breakpoint lands on nothing; on current images with `waydroid_lid` (`mBaseState=OPEN`), `jdb` is not needed | update `input-bridge` for native `waydroid_lid` (`gbos-doctor.py` checks base device state), or let `resolve_cds_names.py` resolve the new names automatically |
 
 ### When an app update renames the classes
 
-The keeper and the App Cast feeder hook four classes inside the Cross-Device Services app. Google's build obfuscates their names,
-so an update renames them. The code inside stays the same, and each class has log strings that identify it. Known names:
+On images with virtual `waydroid_lid` (`mBaseState=OPEN`), Cross-Device discovery connects natively without `jdb`; `gb-hub-link.sh` automatically uses `resolve_cds_names.py` whenever falling back to `jdb`, and `appcast_session.py` uses `resolve_cds_names.py` on every App Cast launch.
 
-| Role | Where it is used | Before 2026-11-15 | 1.0.1387 (versionCode 100143140) | Identifying string |
-|---|---|---|---|---|
-| discovery gate | `gb-hub-link.sh` `GATE` (or `GB_GATE_CLASS`) | `lin` | `myr` | `Discovery is not paused, starting discoverDevices.` |
-| stall/launch watchdog | `injector/feed_live.js` `N_STALL` | `kkp` | `mbo`, `lyy` | `Stream stalled for %d ms` |
-| connection attempt | `injector/feed_live.js` `N_CONN` | `kjq` | `map` | `SecurityException during connection` |
-| Kotlin `Unit` | `injector/feed_live.js` `N_UNIT` | `xil` | `zlf` | `kotlin.Unit` |
-| codec list (static helpers) | `injector/appcast_loopback.js` `N_CODECS` | `jwi` | `ljx` | `c2.android.` |
-| display session | `injector/appcast_loopback.js` `N_DISPLAY` | `kan` | `lnp` | `Acquired display-specific wake lock and Wi-Fi lock for display` |
-| connect hook | `injector/appcast_loopback.js` `N_CONNECT` | `llz` | `ncd` | `DeviceLinkService#connectDevice: Failed to notify listener.` |
-| device link | `injector/appcast_loopback.js` `N_LINK` | `lmb` | `ncf` | `Closing channel for device %s` |
+The pure-Python DEX resolver (`host/phonehub/injector/resolve_cds_names.py`) extracts the obfuscated names directly from the container's `base.apk` using each class's invariant log/signature fingerprints and caches them in `~/.cache/gbos/cds-names-<versionCode>.json`. Known names:
 
-To find them for a new version, pull the app and disassemble it with [baksmali](https://github.com/baksmali/smali/releases)
-(light on memory, unlike a full decompile), then search for the strings:
+| Role | Where it is used | Before 2026-11-15 | 1.0.1387 (versionCode 100143140) | 1.0.1392 (versionCode 100144420) | Identifying string |
+|---|---|---|---|---|---|
+| discovery gate | `gb-hub-link.sh` `GATE` (or `GB_GATE_CLASS`, legacy `jdb` fallback only) | `lin` | `myr` | `nbh` | `Discovery is not paused, starting discoverDevices.` |
+| stall/launch watchdog | `injector/feed_live.js` `N_STALL` | `kkp` | `mbo`, `lyy` | `mbl`, `mec` | `Stream stalled for %d ms` |
+| connection attempt | `injector/feed_live.js` `N_CONN` | `kjq` | `map` | `mdd` | `SecurityException during connection` |
+| Kotlin `Unit` | `injector/feed_live.js` `N_UNIT` | `xil` | `zlf` | `xlo` | `kotlin.Unit` |
+| video decoder (fallback) | `injector/feed_live.js` `N_JYS` | `jys` | `jys` | `lmn` | `Failed to start MediaCodec video decoder` |
+| codec list (static helpers) | `injector/appcast_loopback.js` `N_CODECS` | `jwi` | `ljx` | `lkv` | `c2.android.` |
+| display session | `injector/appcast_loopback.js` `N_DISPLAY` | `kan` | `lnp` | `lox` | `Released display-specific wake lock and Wi-Fi lock` |
+| connect hook | `injector/appcast_loopback.js` `N_CONNECT` | `llz` | `ncd` | `net` | `DeviceLinkService#connectDevice: Failed to notify listener.` |
+| device link | `injector/appcast_loopback.js` `N_LINK` | `lmb` | `ncf` | `nev` | `Closing channel for device %s` |
+
+To refresh or inspect the resolved mapping manually against the running container:
+
+```sh
+python3 host/phonehub/injector/resolve_cds_names.py --container 192.168.240.112:5555
+```
+
+Or to inspect a pulled APK offline with [baksmali](https://github.com/baksmali/smali/releases) and verify manually:
 
 ```sh
 adb shell pm path --user 10 com.google.ambient.streaming      # the /data/app/... base.apk
@@ -92,15 +99,14 @@ for d in classes*.dex; do java -Xmx768m -jar baksmali.jar d "$d" -o smali; done
 grep -rlF 'Discovery is not paused, starting discoverDevices.' smali     # -> smali/<name>.smali
 ```
 
-**Method names move too.** In 1.0.1387 the codec helpers kept their class role but shifted method names: the decoder-name
+**Method names move too.** In 1.0.1387 the codec helpers kept their class role (`jwi` → `ljx`, `lkv` in 1.0.1392) but shifted method names: the decoder-name
 method `f(String,boolean,boolean)` became `e`, `g(String,boolean)` became `f`, and `h(List)` became `g`
 (`N_CODECS_DECNAME`, `N_CODECS_NAME`, `N_CODECS_MIME`). Hooking the old names attached string-returning replacements to
 unrelated methods and crashed the app's garbage collector (`GC tried to mark invalid reference`) about 13 s after a cast
-started. Compare the method lists (`grep '^.method' X.smali`) of old and new, not only the class names.
+started. `resolve_cds_names.py` resolves these methods by exact JVM parameter/return signatures, and the hooks are pinned
+with `.overload(...)` so a future mismatch fails safely with a warning.
 
-Check that each match has the same shape as before (for the gate: a class with a `synthetic b:Z` field and a method
-`b(Ljava/lang/Object;)Ljava/lang/Object;`). Then set the names, restart `gb-hub-link` and `gb-appcast`, and please open
-an issue with the version and the names so they can be added here.
+Check any new match manually if auto-resolution ever fails, and please open an issue with the version and the names.
 
 ## Sound, memory, shutdown
 

@@ -1,0 +1,14 @@
+# Host-side: the Googlebook-on-Waydroid input-bridge creates uinput devices named waydroid_* inside the
+# container, but uinput is not namespaced so those /dev/input/eventN nodes also appear on the host.
+#  - Host libinput/GNOME would process them (double input, overview-on-motion): tell libinput to ignore them.
+#  - systemd-logind would watch waydroid_lid (and waydroid_keyboard) as lid/power buttons, because
+#    70-power-switch.rules tags every event node with ID_INPUT_SWITCH or ID_INPUT_KEY. udev tags are sticky
+#    (a later TAG-= does not untag the device), so this file sorts after 60-input-id.rules, which sets those
+#    properties, and before 70-power-switch.rules, and clears them so the tag is never added.
+# The container's EventHub reads the nodes directly and does not use host udev properties, so it is unaffected.
+ACTION=="remove", GOTO="waydroid_input_end"
+SUBSYSTEM!="input", GOTO="waydroid_input_end"
+ATTRS{name}!="waydroid_*", GOTO="waydroid_input_end"
+ENV{LIBINPUT_IGNORE_DEVICE}="1"
+KERNEL=="event*", ENV{ID_INPUT_SWITCH}="", ENV{ID_INPUT_KEY}=""
+LABEL="waydroid_input_end"

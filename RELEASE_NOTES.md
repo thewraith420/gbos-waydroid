@@ -1,4 +1,4 @@
-# GBOS on Waydroid — v0.1.3-pre
+# GBOS on Waydroid — v0.1.4-pre
 
 Preview release. Run the Android 17 "Googlebook" system image inside Waydroid on an ordinary
 Linux PC, and link it to an Android phone with Phone Hub / App Cast.
@@ -12,24 +12,63 @@ install Waydroid for you.
 
 ## What's in this release
 
-- **Source** (`gbos-0.1.3-pre-src.tar.gz`): the whole repository, which includes the installer,
+- **Source** (`gbos-0.1.4-pre-src.tar.gz`): the whole repository, which includes the installer,
   recipe, native helpers, Android app sources, host services, the optional hybrid-GPU mode, the
   optional kernel add-ons, and the docs.
-- **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `vulkan.hybrid64.so`), byte-identical
-  to every earlier release. These save the installer from building them. `input-bridge` and `vpd-stub` are
+- **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `vulkan.hybrid64.so`). `input-bridge`
+  is new in this release (it adds the virtual lid switch, below); the other two are byte-identical to every earlier
+  release. These save the installer from building them. `input-bridge` and `vpd-stub` are
   reproducible NDK r27c builds. The GPU shim is the exact binary tested on-device. All three
   match the committed [`prebuilt.sha256`](prebuilt.sha256), and the installer checks every
   download against it.
 
 ```sh
 installer/gbos-install.py fetch-prebuilt \
-  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.3-pre --dest DIR
+  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.4-pre --dest DIR
 ```
 
 If you'd rather not use them, build from source. `prepare --ndk auto` fetches the NDK and
 compares what it builds against the published checksums.
 
-## New since v0.1.2-pre
+## New since v0.1.3-pre
+
+- **Phone Hub connects without a debugger.** Cross-Device Services only searches for the phone when Android thinks the
+  device is open, and under Waydroid it always read as closed, so the link keeper had to attach `jdb` and force that
+  check every time. `input-bridge` now adds a virtual lid switch (`waydroid_lid`) that reports open, so the check passes
+  on its own. On the developer's machine the link has needed no forcing since. The `jdb` route is kept for older images, and a JDK is
+  still needed to build the apps.
+- **New Cross-Device Services versions are handled automatically.** `resolve_cds_names.py` reads the app's code and
+  finds the renamed classes and methods the keeper and App Cast use, caching the result per version
+  (`~/.cache/gbos/cds-names-<version>.json`). It matches every name found by hand for the last two versions, and knows
+  1.0.1392 (2026-11) out of the box. No more waiting for a GBOS update after the app updates itself.
+- **Reconnecting the phone is more reliable.** `phone_rearm.py` finds the phone's wireless debugging port by mDNS before
+  scanning, scans the whole range when it has to, and says so plainly when the phone has stopped trusting this computer
+  (`ERR adb-unpaired`: pair again) instead of retrying forever.
+- **The host no longer treats Waydroid's virtual devices as its own lid and power buttons.** The udev rule is now
+  `65-waydroid-input-ignore.rules` (was `99-`); the old one could not stop `systemd-logind` watching them. `try.sh`
+  installs the new one and removes the old one, and `gbos-doctor.py` flags the old name.
+- `gbos-doctor.py` checks Android's base device state, and its Cross-Device check is stricter. `TROUBLESHOOTING.md`
+  and `FIX-CATALOG.md` cover the new route.
+
+### Upgrading from v0.1.3-pre
+
+You don't need to reinstall, and don't re-run `try.sh`: it resets Waydroid. Instead:
+
+```sh
+installer/gbos-install.py fetch-prebuilt --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.4-pre --dest DIR
+installer/gbos-install.py prepare --downloads D --work WORK --prebuilt DIR   # same folders and options as your install;
+                                                              # finished steps are skipped, the new files land in WORK
+sudo install -m 644 recipe/65-waydroid-input-ignore.rules /etc/udev/rules.d/
+sudo rm -f /etc/udev/rules.d/99-waydroid-input-ignore.rules
+host/install-host.sh phonehub                                 # the new keeper and resolver
+cd WORK && sudo ./bake-apps.sh                                # installs the new input-bridge and gb-firstboot.sh into the image
+```
+
+Then restart Waydroid. `gbos-doctor.py` should report the base device state as OPEN.
+
+## Earlier releases
+
+### v0.1.3-pre
 
 - **The CPU-emulation add-on (`vexemu`) works again, and on distribution kernels.** Testing it on a stock Debian kernel found
   three bugs, each of which stopped it for anyone not on the developer's own kernel:
@@ -49,8 +88,6 @@ compares what it builds against the published checksums.
   `check --json` reports the same.
 - `kernel/README.md` has a Secure Boot section. `tools/test-addons-plan.sh` no longer depends on the test machine's own
   kernel modules (3 cases failed on machines that have legacy iptables), and covers Debian's layout.
-
-## Earlier releases
 
 ### v0.1.2-pre
 

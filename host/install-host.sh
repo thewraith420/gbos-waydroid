@@ -118,7 +118,7 @@ do_phonehub() {
     fi
 
     command -v adb >/dev/null || say "warning: adb not found. Install the adb package (docs/TUTORIAL-adb.md); the services need it."
-    command -v jdb >/dev/null || say "warning: jdb not found. Install a JDK (default-jdk-headless); the link keeper needs it."
+    command -v jdb >/dev/null || say "note: jdb not found (optional fallback for older images without native waydroid_lid; install default-jdk-headless if needed)."
     if [ -z "$STAGE" ]; then
         python3 -c "import venv, ensurepip" 2>/dev/null || die "python3-venv is missing (Debian/Ubuntu: sudo apt install python3-venv)"
         command -v curl >/dev/null && command -v xz >/dev/null || die "curl and xz-utils are needed"
@@ -128,7 +128,7 @@ do_phonehub() {
     cp -a "$HERE/phonehub/." "$PH/"
     rm -rf "$PH/units"
     find "$PH" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-    chmod 755 "$PH"/*.sh "$PH"/*.py "$PH"/injector/phone_agent.sh
+    chmod 755 "$PH"/*.sh "$PH"/*.py "$PH"/injector/phone_agent.sh "$PH"/injector/resolve_cds_names.py
     if [ -n "$WORK" ]; then                       # the folder `gbos-install.py prepare` built
         [ -d "$WORK" ] || die "no such folder: $WORK"
         [ -z "$TOUCH_JAR" ] && [ -f "$WORK/touch_injector/build/gb-touch.jar" ] && TOUCH_JAR="$WORK/touch_injector/build/gb-touch.jar"

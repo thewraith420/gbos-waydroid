@@ -12,12 +12,13 @@ PORT=${JDWP_PORT:-8701}
 APP=com.google.ambient.streaming
 SVC=$APP/.multidevicesync.devicelink.dtdi.foreground.ForegroundDiscoveryService
 # The discovery gate is a class whose name R8 obfuscation changes with every update of the Cross-Device
-# Services app. A wrong name does not fail loudly: jdb only says "Unable to set deferred breakpoint" and the
-# gate is forced 0 times, so the link never comes up. Known names, by the app's versionCode:
-#   before the 2026-11-15 update: lin      100143140 (1.0.1387): myr
-# Override with GB_GATE_CLASS. docs/TROUBLESHOOTING.md#phone-hub says how to find the name for a new version.
-GATE_KNOWN_VERSION=100143140
-GATE=${GB_GATE_CLASS:-myr}
+# Services app. On images with virtual waydroid_lid (SW_LID=0), mBaseState is OPEN/TABLET so the gate
+# evaluates true natively without jdb. On legacy images without waydroid_lid, jdb forces the gate -> true;
+# resolve_cds_names.py extracts the class name directly from the container APK (cached per versionCode).
+# Historical names: pre-2026-11-15: lin | 1.0.1387 (100143140): myr | 1.0.1392 (100144420): nbh.
+GATE_KNOWN_VERSION=100144420
+GATE=${GB_GATE_CLASS:-nbh}
+RESOLVER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/injector/resolve_cds_names.py"
 D=$GB_RUN/hub-link
 mkdir -p "$D"
 # AppCast coexistence: while this lock exists an injected AppCast session is live, so the keeper
@@ -86,8 +87,14 @@ wait_container() {
     sleep 2
   done
 
-  # Ensure DeviceState is OPEN (2)
-  A shell "cmd device_state state 2" >/dev/null 2>&1 || true
+  # Ensure DeviceState is OPEN (2) only on legacy images whose base state is CLOSED
+  base_lid_open || A shell "cmd device_state state 2" >/dev/null 2>&1 || true
+}
+
+base_lid_open() {
+  local ds
+  ds=$(A shell "dumpsys device_state 2>/dev/null" || true)
+  [[ "$ds" =~ mBaseState=Optional\[DeviceState\{identifier=(2|3), ]]
 }
 
 is_connected() {
@@ -142,7 +149,7 @@ restart_discovery() {
   discovery_backoff=$(( discovery_backoff * 2 ))
   [ $discovery_backoff -le 900 ] || discovery_backoff=900
   log "Cast live: restarting ForegroundDiscoveryService in place (no force-stop, window untouched; next in-place retry in ${discovery_backoff}s)."
-  A shell "cmd device_state state 2" >/dev/null 2>&1 || true
+  base_lid_open || A shell "cmd device_state state 2" >/dev/null 2>&1 || true
   A shell "am stop-service --user 10 -n $SVC" >/dev/null 2>&1 || true
   sleep 2
   A shell "am start-foreground-service --user 10 -n $SVC" >/dev/null 2>&1 || true
@@ -202,7 +209,7 @@ refresh_gms() {
 kick_gate() {
   ensure_gms_lan_route   # the Wi-Fi upgrade happens during the connect this triggers; route must already be in place
   log "Cross-Device not connected; initiating discovery gate kick..."
-  A shell "cmd device_state state 2" >/dev/null 2>&1 || true
+  base_lid_open || A shell "cmd device_state state 2" >/dev/null 2>&1 || true
 
   # Start service with wait-for-debugger
   A shell "am force-stop $APP; am set-debug-app -w $APP; am start-foreground-service --user 10 -n $SVC >/dev/null 2>&1"
@@ -331,20 +338,74 @@ note_kick_result() {
 
 log "Starting GBOS Cross-Device link keeper..."
 VERSION_CHECKED=0
+LID_MODE_LOGGED=""
+
+kick_native() {
+  log "Cross-Device not connected; starting discovery service natively (waydroid_lid open, no jdb)..."
+  ensure_radio
+  local pid
+  pid=$(A shell "pidof $APP" 2>/dev/null | tr -d '\r ' || true)
+  if [ -n "$pid" ]; then
+    A shell "am stop-service --user 10 -n $SVC" >/dev/null 2>&1 || true
+    sleep 1
+  fi
+  A shell "am start-foreground-service --user 10 -n $SVC" >/dev/null 2>&1 || true
+}
+
+kick_auto() {
+  local retry_on_miss=${1:-0}
+  if base_lid_open; then
+    kick_native || true
+    return 0
+  fi
+  kick_gate || true
+  if [ "$retry_on_miss" = 1 ] && [ "$KICK_SEEN" = 0 ] && ! is_connected; then
+    log "Gate was forced 0 times: refreshing Play services and kicking again straight away."
+    refresh_gms force
+    kick_gate || true
+  fi
+}
+
+log_lid_mode() {
+  local mode="legacy-jdb"
+  if base_lid_open; then mode="native-lid"; fi
+  if [ "$LID_MODE_LOGGED" != "$mode" ]; then
+    LID_MODE_LOGGED="$mode"
+    if [ "$mode" = "native-lid" ]; then
+      log "Base device state is OPEN/TABLET (native waydroid_lid active; jdb gate forcing disabled)."
+    else
+      log "WARNING: Base device state is CLOSED (no waydroid_lid); using legacy jdb gate-forcing fallback."
+    fi
+  fi
+}
+
+resolve_gate() {
+  [ -z "${GB_GATE_CLASS:-}" ] || return 0
+  local g
+  g=$(python3 "$RESOLVER" --container "$ADB_ADDR" --field gate 2>/dev/null | tr -d '\r\n' || true)
+  if [ -n "$g" ]; then
+    GATE="$g"
+    log "Resolved CDS discovery gate class: $GATE"
+    return 0
+  fi
+  return 1
+}
+
 check_cds_version() {   # once per keeper start, after the container is reachable
   [ "$VERSION_CHECKED" = 0 ] || return 0
   local v
   v=$(A shell "dumpsys package $APP" 2>/dev/null | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p' | sort -n | tail -1 | tr -d '\r')
   [ -n "$v" ] || return 0
   VERSION_CHECKED=1
-  if [ -z "${GB_GATE_CLASS:-}" ] && [ "$v" != "$GATE_KNOWN_VERSION" ]; then
-    log "WARNING: Cross-Device Services is version $v; the gate name '$GATE' is known for $GATE_KNOWN_VERSION only. If the gate is forced 0 times, the app update renamed it: see docs/TROUBLESHOOTING.md#phone-hub."
+  if ! resolve_gate && [ -z "${GB_GATE_CLASS:-}" ] && [ "$v" != "$GATE_KNOWN_VERSION" ]; then
+    log "WARNING: Cross-Device Services is version $v; auto-resolution failed and default gate '$GATE' is known for $GATE_KNOWN_VERSION only (docs/TROUBLESHOOTING.md#phone-hub)."
   fi
 }
 
 while true; do
   wait_container
   check_cds_version
+  log_lid_mode
   ensure_gms_lan_route
   ensure_recorder
 
@@ -363,7 +424,7 @@ while true; do
       log "Reconnect requested: refreshing Play services, then a full gate kick (cast will re-attach)."
       kick_fail_streak=0; next_kick_after=0     # an explicit request clears any backoff
       refresh_gms force
-      kick_gate || true
+      kick_auto 0
       for m in {1..12}; do is_connected && { log "Confirmed: Link established after requested reconnect."; break; }; sleep 5; done
     fi
     continue
@@ -417,16 +478,12 @@ while true; do
     sleep 5
     continue
   fi
-  kick_gate || true
+  kick_auto 1
 
   # A kick that forced the gate 0 times produced nothing to settle (measured 17:07 and 19:41 on 2026-11-01:
   # every 0-force kick was followed by a successful 3-force kick right after a Play services restart).
   # Do that restart now instead of waiting out the settle loop below.
-  if [ "$KICK_SEEN" = 0 ] && ! is_connected; then
-    log "Gate was forced 0 times: refreshing Play services and kicking again straight away."
-    refresh_gms force
-    kick_gate || true
-  fi
+  # Retry leg above already covers KICK_SEEN=0 inside kick_auto 1 when using legacy jdb.
 
   # Monitor connection settling
   for m in {1..12}; do

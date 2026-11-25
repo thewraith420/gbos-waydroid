@@ -15,8 +15,9 @@ T0=$(adb -s $A shell date +%T | tr -d '\r')
 adb -s $A shell 'am force-stop com.google.ambient.streaming; am set-debug-app -w com.google.ambient.streaming; am start-foreground-service --user 10 -n com.google.ambient.streaming/.multidevicesync.devicelink.dtdi.foreground.ForegroundDiscoveryService >/dev/null'
 sleep 5
 P=$(adb -s $A shell pidof com.google.ambient.streaming | tr -d '\r'); adb -s $A forward tcp:8700 jdwp:$P >/dev/null
+GATE=${GB_GATE_CLASS:-$(python3 "$(cd "$(dirname "$0")" && pwd)/injector/resolve_cds_names.py" --field gate 2>/dev/null || echo nbh)}
 mkfifo $S/jin; (timeout $((DUR+10)) jdb -attach localhost:8700 < $S/jin > $S/jdb.out 2>&1 &); exec 7>$S/jin
-echo "stop in myr.b" >&7; sleep 3; echo resume >&7
+echo "stop in $GATE.b" >&7; sleep 3; echo resume >&7
 seen=0; for i in $(seq 1 $DUR); do h=$(grep -c "Breakpoint hit" $S/jdb.out); if [ "$h" -gt "$seen" ]; then echo "set this.b = true" >&7; sleep 0.4; echo cont >&7; seen=$h; fi; sleep 1; done
 echo exit >&7; exec 7>&-; adb -s $A shell 'am clear-debug-app'
 echo "== events since $T0"

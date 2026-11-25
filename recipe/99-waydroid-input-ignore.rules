@@ -1,5 +1,0 @@
-# Host-side: the Googlebook-on-Waydroid input-bridge creates uinput devices named waydroid_* inside the
-# container, but uinput is not namespaced so those /dev/input/eventN nodes also appear on the host and
-# the host's libinput/GNOME would process them (double input, overview-on-motion). Tell host libinput to
-# ignore them; the container's EventHub reads them directly and is unaffected.
-SUBSYSTEM=="input", ATTRS{name}=="waydroid_*", ENV{LIBINPUT_IGNORE_DEVICE}="1"

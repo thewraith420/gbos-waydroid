@@ -28,8 +28,16 @@ def get_status():
             ["adb", "-s", gbos_env.container(), "shell", "dumpsys notification --noredact"],
             capture_output=True, text=True, timeout=3
         )
-        if "pkg=com.google.ambient.streaming" in r.stdout and "android.title=String (Connected)" in r.stdout:
-            status["cds"] = "connected"
+        lines = r.stdout.splitlines()
+        for i, line in enumerate(lines):
+            if "pkg=com.google.ambient.streaming" in line and "id=1 tag=null" in line:
+                for sub in lines[i + 1 : i + 45]:
+                    if "NotificationRecord(" in sub:
+                        break
+                    if "android.title=String (Connected)" in sub:
+                        status["cds"] = "connected"
+                        break
+                break
     except Exception:
         pass
 

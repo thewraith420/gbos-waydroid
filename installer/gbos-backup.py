@@ -65,7 +65,7 @@ def tier_paths(tier, user):
     if tier == "config":
         p = [WAYDROID + n for n in ("/waydroid.cfg", "/waydroid.prop", "/waydroid_base.prop", "/lxc", "/fake-sysctl",
                                     "/host-permissions", "/gbos-gpu.json")]
-        p += ["/etc/udev/rules.d/99-waydroid-input-ignore.rules", "/etc/modules-load.d/waydroid-iptables.conf",
+        p += ["/etc/udev/rules.d/65-waydroid-input-ignore.rules", "/etc/udev/rules.d/99-waydroid-input-ignore.rules", "/etc/modules-load.d/waydroid-iptables.conf",
               "/etc/gb-lan.conf", "/usr/local/sbin/gb-lan.py", "/usr/local/sbin/gb-bt-bridge.py",
               "/usr/local/sbin/wifi-hwsim.sh"]
         p += ["/etc/systemd/system/" + u for u in ("gb-lan.service", "gb-wifi-host.service", "gb-bt-bridge.service")]

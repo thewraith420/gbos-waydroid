@@ -102,12 +102,12 @@ static void mknod_evnode(int ufd) {
     closedir(d);
 }
 
-// type: 0=keyboard, 1=mouse (relative), 2=touchscreen (abs MT)
+// type: 0=keyboard, 1=mouse (relative), 2=touchscreen (abs MT), 3=lid switch (EV_SW/SW_LID=0)
 static int make_dev(const char *name, int type) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) { LOGI("open /dev/uinput: %s", strerror(errno)); return -1; }
     ev(fd, UI_SET_EVBIT, EV_SYN);
-    ev(fd, UI_SET_EVBIT, EV_KEY);
+    if (type != 3) ev(fd, UI_SET_EVBIT, EV_KEY);
     if (type == 0) {
         for (int k = 1; k < 256; k++) ev(fd, UI_SET_KEYBIT, k);
     } else if (type == 1) {                // absolute pointer, modelled as an indirect stylus/tablet so
@@ -126,7 +126,7 @@ static int make_dev(const char *name, int type) {
         ev(fd, UI_SET_EVBIT, EV_REL);
         ev(fd, UI_SET_RELBIT, REL_WHEEL); ev(fd, UI_SET_RELBIT, REL_HWHEEL);  // scroll wheel
         ev(fd, UI_SET_PROPBIT, INPUT_PROP_POINTER);  // indirect -> cursor (not direct touchscreen)
-    } else {                               // multitouch touchscreen (also carries hwcomposer two-finger scroll)
+    } else if (type == 2) {                // multitouch touchscreen (also carries hwcomposer two-finger scroll)
         ev(fd, UI_SET_EVBIT, EV_ABS);
         ev(fd, UI_SET_ABSBIT, ABS_MT_SLOT); ev(fd, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
         ev(fd, UI_SET_ABSBIT, ABS_MT_POSITION_X); ev(fd, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
@@ -134,6 +134,9 @@ static int make_dev(const char *name, int type) {
         ev(fd, UI_SET_ABSBIT, ABS_X); ev(fd, UI_SET_ABSBIT, ABS_Y);
         ev(fd, UI_SET_KEYBIT, BTN_TOUCH);
         ev(fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
+    } else if (type == 3) {                // virtual lid switch: SW_LID=0 (OPEN) so InputManagerService sees lid open
+        ev(fd, UI_SET_EVBIT, EV_SW);
+        ev(fd, UI_SET_SWBIT, SW_LID);
     }
     struct uinput_user_dev u;
     memset(&u, 0, sizeof u);
@@ -162,6 +165,14 @@ static int make_dev(const char *name, int type) {
     if (write(fd, &u, sizeof u) != (ssize_t)sizeof u) { LOGI("write dev '%s': %s", name, strerror(errno)); close(fd); return -1; }
     if (ioctl(fd, UI_DEV_CREATE) < 0)              { LOGI("UI_DEV_CREATE '%s': %s", name, strerror(errno)); close(fd); return -1; }
     mknod_evnode(fd);
+    if (type == 3) {
+        struct input_event sw[2] = {
+            { .type = EV_SW,  .code = SW_LID,     .value = 0 },
+            { .type = EV_SYN, .code = SYN_REPORT, .value = 0 },
+        };
+        if (write(fd, sw, sizeof sw) != (ssize_t)sizeof sw)
+            LOGI("emit initial SW_LID '%s': %s", name, strerror(errno));
+    }
     LOGI("created uinput device '%s'", name);
     return fd;
 }
@@ -206,6 +217,8 @@ int main(void) {
     int touch_active = 0, touch_has_ox = 0, touch_has_oy = 0, touch_ox = 0, touch_oy = 0;
     umask(0);               // so mknod() below creates nodes 0666, not 0666 & ~umask (EventHub needs rw)
     ensure_uinput();
+    int lid_fd = make_dev("waydroid_lid", 3);
+    (void)lid_fd;
     for (int i = 0; i < n; i++) {
         m[i].ufd = make_dev(m[i].name, m[i].type);
         m[i].sfd = open_src(m[i].src);

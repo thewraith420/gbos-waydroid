@@ -1,5 +1,5 @@
 [Unit]
-Description=GBOS Cross-Device link keeper (forces the app's discovery gate under jdb)
+Description=GBOS Cross-Device link keeper (keeps Cross-Device Services connected; jdb fallback on legacy images)
 After=graphical-session.target
 
 [Service]

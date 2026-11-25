@@ -31,13 +31,14 @@
 'use strict';
 
 var PKG='';
-// R8-obfuscated Cross-Device Services names; they change with every update of the app.
-// Before the 2026-11-15 update: codec list=jwi (decoder-name method f), display session=kan, connect hook=llz, device link=lmb.
-// 1.0.1387 (versionCode 100143140): ljx (decoder-name method is now e; the new f is a different method), lnp, ncd, ncf.
-// Codec-class methods by role (old jwi -> new ljx): mime-from-list h(List)->g, decoder name f(String,Z,Z)->e,
-// codec name g(String,Z)->f. Hooks are pinned to their argument types so a rename fails loudly instead of
-// replacing an unrelated method (a mismatched replacement crashed ART's moving GC on 2026-11-16).
-var N_CODECS='ljx', N_CODECS_DECNAME='e', N_CODECS_MIME='g', N_CODECS_NAME='f', N_DISPLAY='lnp', N_CONNECT='ncd', N_LINK='ncf';
+// R8-obfuscated Cross-Device Services names; resolved automatically from the APK by resolve_cds_names.py
+// into globalThis.GB_CDS_NAMES, with built-in defaults matching 1.0.1392 (versionCode 100144420).
+// History: pre-2026-11-15: jwi (f/h/g), kan, llz, lmb | 1.0.1387 (100143140): ljx (e/g/f), lnp, ncd, ncf |
+//          1.0.1392 (100144420): lkv (e/g/f), lox, net, nev.
+// Hooks are pinned to their argument types so a rename fails loudly instead of replacing an unrelated method.
+var _CN_LB = globalThis.GB_CDS_NAMES || {};
+var N_CODECS=_CN_LB.codecs||'lkv', N_CODECS_DECNAME=_CN_LB.codecs_decname||'e', N_CODECS_MIME=_CN_LB.codecs_mime||'g',
+    N_CODECS_NAME=_CN_LB.codecs_name||'f', N_DISPLAY=_CN_LB.display||'lox', N_CONNECT=_CN_LB.connect||'net', N_LINK=_CN_LB.link||'nev';
 var MEDIA_IP='10.77.0.1';
 var DEV_A='synthetic-appcast', SELF_A='Pixel 7',  UUID_A='b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5';
 var DEV_B='synthetic-recv',    SELF_B='SyntheticPhone',  UUID_B='c1d2e3f4-0000-4b4b-b5b5-d6d6d6d6d6d6';

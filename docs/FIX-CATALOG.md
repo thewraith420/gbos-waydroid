@@ -222,10 +222,9 @@ limitation); it uses the NAT address instead.
 2. Even then the flag stayed false in the live process. The app reads flags from a snapshot kept by **Play services in its own shared storage, tried before the app's local snapshot**, and that one predates the
    override. Editing the app's own snapshot changes nothing. *Fix:* move the shadowing shared snapshot aside, `am force-stop`, and refresh the app's local snapshot with a `phenotype.UPDATE` broadcast
    carrying `PACKAGE_NAME`.
-3. One of the seven inputs of the discovery gate stays false on this device and was never identified (not lid state, doze, keyguard, network or feature 7). *Workaround:* start the service under `jdb` with a
-   breakpoint at the gate and set it true each time it is evaluated, **for the ~15 s handshake only, then detach**. A debugger left attached freezes every thread on each evaluation, starves Nearby sockets, and
-   produces GATT write timeouts and UKEY2 aborts: the link drops and reconnects in a loop.
-*Where:* `host/phonehub/gb-userfixes.sh` (steps 3), `host/phonehub/gb-hub-link.sh`. *Status:* verified. The gate is still unidentified.
+3. **Root cause identified and eliminated (`DeviceLidStateProvider` / `ncq`):** the seventh input of the discovery gate (`ncq`) watches `DeviceStateManager` and stays `false` whenever `deviceState.hasProperty(101)` (`PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_LID_CLOSED`) is true. Without an `SW_LID` input switch, `InputManagerService.getSwitchState()` returns `-1` (`LID_ABSENT`), so `DesktopDeviceStateProvider` sets `mBaseState = CLOSED (0)` with physical property `101`. `cmd device_state state 2` only sets an *override* state while Android still merges `mBaseState`'s physical property `101` onto it, so `ncq` stayed false.
+   *Root fix:* `native/input-bridge.c` creates a virtual `waydroid_lid` uinput switch (`EV_SW` / `SW_LID=0`, OPEN), making `mBaseState = OPEN (2)` with no lid-closed physical property (`Override Request active: false`, `Master mute: off`), so discovery succeeds natively without `jdb`. *Legacy fallback:* on older images whose `mBaseState` is still `CLOSED`, `gb-hub-link.sh` still falls back to `jdb` during the ~15 s handshake (`disconnect` then immediately; leaving `jdb` attached starves Nearby sockets and causes GATT/UKEY2 loops).
+*Where:* `native/input-bridge.c` (`waydroid_lid`), `recipe/65-waydroid-input-ignore.rules`, `recipe/gb-firstboot.sh`, `host/phonehub/gb-userfixes.sh`, `host/phonehub/gb-hub-link.sh`. *Status:* verified live on `1.0.1392` with zero `jdb` processes.
 
 ### 17. Link will not reconnect after a restart
 *Symptom:* "Looking for your nearby devices" forever, although radios, mDNS and BLE advertisements all work.
@@ -388,20 +387,10 @@ R8-obfuscated. Play Store updated `com.google.ambient.streaming` to 1.0.1387 on 
 same method, same log strings). jdb answered `Unable to set deferred breakpoint lin.b : No method b in lin`, nothing was forced, and
 the link stayed down. The last forced gate in the journal is the evening before the update; every round after it forced 0. The App
 Cast feeder's three obfuscated classes were renamed too (`kjq`, `kkp`, `xil` became `map`, `mbo` plus a new variant `lyy`, and `zlf`).
-*Fix:* the names are variables now (`GATE` / `GB_GATE_CLASS` in the keeper, `N_UNIT`, `N_STALL`, `N_CONN` in `feed_live.js`), the keeper
-warns when the app's versionCode is not the one they are known for, and TROUBLESHOOTING has the table of known names and how to
-find new ones (baksmali, search for each class's log string). Verified: with `myr` the next kick forced the gate 3 times and the link
-connected 3 s later.
-*App Cast, the same update:* `appcast_loopback.js` used four more renamed classes (`jwi`, `kan`, `llz`, `lmb` became `ljx`, `lnp`, `ncd`,
-`ncf`). With `llz` wrong the cast window never established (`llz.a DISARMED — armed 45s with no Establish`), the supervisor saw 0
-frames, restarted the cross-device app, and that dropped the link: the two services fought each other. With the class names fixed the
-cast played, then the app died 13 s after its moving GC resumed: `GC tried to mark invalid reference 0x80008` in
-`MarkCompact::MarkRoots` → `ArtMethod::VisitRoots`. Cause: the codec helper class also renamed its *methods* (`f`→`e`, `g`→`f`, `h`→`g`),
-so the script's string-returning replacements for `h`, `f`, `g` landed on different methods, one of them returning boolean. Hooks are
-now addressed by role and pinned to argument types with `.overload(...)`, so a future rename fails with a warning instead.
-Verified: cast running with the link connected, no crash for 5 minutes after the GC resumed (it had crashed at 13 s).
-*Where:* `host/phonehub/gb-hub-link.sh`, `host/phonehub/hub_try.sh`, `host/phonehub/injector/feed_live.js`,
-`host/phonehub/injector/appcast_loopback.js`, `docs/TROUBLESHOOTING.md`.
+*Fix:*
+1. `host/phonehub/injector/resolve_cds_names.py` parses `classes*.dex` directly from the container's `base.apk`, extracts exact Dalvik `const-string` references and JVM method signatures, and caches the resolved symbols per `versionCode` in `~/.cache/gbos/cds-names-<versionCode>.json`. `appcast_session.py` injects the resolved table as `globalThis.GB_CDS_NAMES` (with built-in `1.0.1392` `versionCode=100144420` defaults: `gate=nbh`, `stall=[mbl,mec]`, `conn=mdd`, `unit=xlo`, `jys=lmn`, `codecs=lkv` [`e`/`f`/`g`], `display=lox`, `connect=net`, `link=nev`). `gb-hub-link.sh` and `hub_try.sh` also resolve `GATE` automatically via `resolve_cds_names.py` on legacy images where `jdb` fallback is active.
+2. Method hooks remain pinned to argument types with `.overload(...)` so any signature shift fails safely with a warning rather than corrupting moving GC roots.
+*Where:* `host/phonehub/injector/resolve_cds_names.py`, `host/phonehub/injector/appcast_session.py`, `host/phonehub/injector/appcast_loopback.js`, `host/phonehub/injector/feed_live.js`, `host/phonehub/gb-hub-link.sh`, `host/phonehub/hub_try.sh`, `docs/TROUBLESHOOTING.md`. *Status:* verified on `1.0.1387` and automated on `1.0.1392` (`100144420`).
 
 ---
 

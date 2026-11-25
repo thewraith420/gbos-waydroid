@@ -26,11 +26,12 @@ var W=1376, H=736, FPS=60;
 var RECV_CLS='com.google.ambient.streaming.multidevicesync.appcast.core.openscreen.JniOpenScreenReceiver';
 var ACT_CLS='com.google.ambient.streaming.multidevicesync.appcast.receiver.AppCastActivity';
 var PKG='';
-// R8-obfuscated Cross-Device Services class names; they change with every update of the app.
-// Before the 2026-11-15 update: unit=xil, stall/launch watchdog=kkp, connection attempt=kjq.
-// 1.0.1387 (versionCode 100143140): unit=zlf, watchdog=mbo plus a second variant lyy, connection=map.
-// How to find them for a new version: docs/TROUBLESHOOTING.md#phone-hub.
-var N_UNIT='zlf', N_STALL=['mbo','lyy'], N_CONN='map';
+// R8-obfuscated Cross-Device Services class names; resolved automatically from the APK by resolve_cds_names.py
+// into globalThis.GB_CDS_NAMES, with built-in defaults matching 1.0.1392 (versionCode 100144420).
+// History: pre-2026-11-15: xil, kkp, kjq, jys | 1.0.1387 (100143140): zlf, [mbo,lyy], map, jys |
+//          1.0.1392 (100144420): xlo, [mbl,mec], mdd, lmn.
+var _CN_FL = globalThis.GB_CDS_NAMES || {};
+var N_UNIT=_CN_FL.unit||'xlo', N_STALL=_CN_FL.stall||['mbl','mec'], N_CONN=_CN_FL.conn||'mdd', N_JYS=_CN_FL.jys||'lmn';
 var POLL_MS=600, POLL_TRIES=400;
 
 function ts(){return new Date().toISOString().slice(11,23);}
@@ -539,7 +540,7 @@ var _uBlocked=0, _kDiag=0;
 function suppressReleaseSurface(){
   if(!FO.keepU){ log('LIVE','jys.u suppression NOT installed (would be a resident Java replacement across GC)'); return; }
   try{
-    Java.use('jys').u.implementation=function(){
+    Java.use(PKG+N_JYS).u.implementation=function(){
       if(_uBlocked++<3){
         var st=''; try{ st=Java.use('android.util.Log').getStackTraceString(Java.use('java.lang.Exception').$new()); }catch(e){}
         log('DIAG','jys.u() releaseSurface CALLED (blocked). caller:\n'+st.split('\n').slice(1,6).join('\n'));
@@ -900,7 +901,7 @@ function ensureSurface(recv, cb){
               NDEC_LIVE=false; ndecInitTried=0;
               try{ globalThis.__GB_SURFACE=Java.retain(s); }catch(e){ globalThis.__GB_SURFACE=s; }
               SVREF=sv;
-              try{ JYS=Java.cast(recv.b.value, Java.use('jys')); JYS=Java.retain(JYS); }catch(e){ JYS=null; }
+              try{ JYS=Java.cast(recv.b.value, Java.use(PKG+N_JYS)); JYS=Java.retain(JYS); }catch(e){ JYS=null; }
               // Make the ANativeWindow NOW, on the main thread, from the FRESH surface wrapper (its
               // $handle + this thread's JNIEnv are reliable here, unlike a retained wrapper on the pump).
               var anwOk=false; try{ anwOk=GB_NDEC.attachSurface(s); }catch(e){ log('NDEC','attachSurface threw: '+e); }
@@ -921,7 +922,7 @@ function ensureSurface(recv, cb){
             // the receiver decodes via ITS OWN jys = recv.b (field b). Use THAT exact instance,
             // not Java.choose('jys') (which, with moving GC disabled, returns a stale lingering jys).
             var jys=null;
-            try{ jys=Java.cast(recv.b.value, Java.use('jys')); }catch(e){ log('WARN','recv.b cast: '+e); }
+            try{ jys=Java.cast(recv.b.value, Java.use(PKG+N_JYS)); }catch(e){ log('WARN','recv.b cast: '+e); }
             if(jys){
               try{ log('DIAG','recv.b class = '+recv.b.value.getClass().getName()+' ; our surface='+s+' valid='+s.isValid()); }catch(e){}
               try{ jys.d(s); }catch(e){ log('WARN','jys.d: '+e); }
@@ -1308,7 +1309,7 @@ function revertJavaHooks(){
   try{ Java.use(RECV_CLS).$init.overloads.forEach(function(ov){ try{ ov.implementation=null; }catch(e){} }); }catch(e){}
   N_STALL.forEach(function(c){ try{ Java.use(PKG+c).b.implementation=null; }catch(e){} });
   try{ Java.use(PKG+N_CONN).b.implementation=null; }catch(e){}
-  try{ Java.use('jys').u.implementation=null; }catch(e){}
+  try{ Java.use(PKG+N_JYS).u.implementation=null; }catch(e){}
   SV_HOOKED=false;
 }
 function shutdown(){

@@ -159,9 +159,11 @@ systemctl stop waydroid-container
 
 # Host udev rule: the in-container input-bridge creates uinput devices named waydroid_* (keyboard/mouse/
 # touch). uinput isn't namespaced, so those event nodes also surface on the host and the host's libinput/
-# GNOME would process them (double input, overview-on-motion). Make host libinput ignore them; the
-# container's EventHub reads them directly and is unaffected.
-install -D -m 644 "$W/99-waydroid-input-ignore.rules" /etc/udev/rules.d/99-waydroid-input-ignore.rules
+# GNOME would process them (double input, overview-on-motion), and systemd-logind would watch waydroid_lid
+# as a lid switch. Make host libinput ignore them and keep logind off them (see the rule file for why it is
+# 65-, not 99-); the container's EventHub reads them directly and is unaffected.
+rm -f /etc/udev/rules.d/99-waydroid-input-ignore.rules   # pre-0.1.4 name; its TAG-= could not untag
+install -D -m 644 "$W/65-waydroid-input-ignore.rules" /etc/udev/rules.d/65-waydroid-input-ignore.rules
 udevadm control --reload-rules 2>/dev/null
 
 # netd (Android 17) uses legacy iptables; the container shares the host kernel and can't load

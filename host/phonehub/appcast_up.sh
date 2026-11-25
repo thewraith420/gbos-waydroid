@@ -210,9 +210,8 @@ wait_cds() {
             said="cds"; }
         sleep 4
     done
-    log "WARN: CDS never held Connected for ~18s."
-    log "      Starting the session anyway so casting is not blocked — but while its lock exists the"
-    log "      keeper cannot repair the link, so CDS will stay down until this session ends."
+    log "WARN: CDS did not hold Connected for ~18s yet."
+    log "      Leaving keeper unlocked; supervisor will retry until CDS connects."
     return 1
 }
 
@@ -631,13 +630,15 @@ if [ -n "${existing// /}" ]; then
     fi
 fi
 
-# Prerequisites first, in the order the handoff documents: CDS has to come up while the keeper is
-# still free to repair it, and only then do we take the lock and attach.
-wait_boot || { cleanup; exit 1; }
-ensure_frida || log "continuing without a verified frida-server"
-wait_cds || true
-pid=$(ensure_ambient) || { cleanup; exit 1; }
-log "ambient pid=$pid"
+if [ "$DRY_RUN" = 1 ] || [ "${GB_APPCAST_ONCE:-0}" = 1 ]; then
+    # Prerequisites first, in the order the handoff documents: CDS has to come up while the keeper is
+    # still free to repair it, and only then do we take the lock and attach.
+    wait_boot || { cleanup; exit 1; }
+    ensure_frida || log "continuing without a verified frida-server"
+    wait_cds || true
+    pid=$(ensure_ambient) || { cleanup; exit 1; }
+    log "ambient pid=$pid"
+fi
 
 if [ "$DRY_RUN" = 1 ]; then
     phone=$(resolve_phone)
@@ -655,5 +656,5 @@ if [ "${GB_APPCAST_ONCE:-0}" = 1 ]; then
     exit 0
 fi
 
-# supervise() resolves the phone address itself on every (re)start.
+# supervise() waits indefinitely for Waydroid + CDS before taking the lock and attaching.
 supervise
