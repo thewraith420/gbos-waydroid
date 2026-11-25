@@ -167,7 +167,10 @@ do_phonehub() {
 
     ctl --user daemon-reload
     if [ "$START" = 1 ]; then
-        for u in "${USER_UNITS[@]}"; do ctl --user enable --now "$u.service"; done
+        for u in "${USER_UNITS[@]}"; do
+            ctl --user enable "$u.service"
+            ctl --user restart "$u.service"
+        done
         say "started. Status:  $PH/appcast_up.sh status"
     else
         for u in "${USER_UNITS[@]}"; do ctl --user enable "$u.service"; done

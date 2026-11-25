@@ -47,7 +47,7 @@ compares what it builds against the published checksums.
 - **The host no longer treats Waydroid's virtual devices as its own lid and power buttons.** The udev rule is now
   `65-waydroid-input-ignore.rules` (was `99-`); the old one could not stop `systemd-logind` watching them. `try.sh`
   installs the new one and removes the old one, and `gbos-doctor.py` flags the old name.
-- `gbos-doctor.py` checks Android's base device state, and its Cross-Device check is stricter. `TROUBLESHOOTING.md`
+- `gbos-doctor.py` checks Android's base device state, and `gb-link-daemon.py`'s Cross-Device check is stricter. `TROUBLESHOOTING.md`
   and `FIX-CATALOG.md` cover the new route.
 
 ### Upgrading from v0.1.3-pre
@@ -60,11 +60,13 @@ installer/gbos-install.py prepare --downloads D --work WORK --prebuilt DIR   # s
                                                               # finished steps are skipped, the new files land in WORK
 sudo install -m 644 recipe/65-waydroid-input-ignore.rules /etc/udev/rules.d/
 sudo rm -f /etc/udev/rules.d/99-waydroid-input-ignore.rules
-host/install-host.sh phonehub                                 # the new keeper and resolver
+sudo udevadm control --reload-rules
+host/install-host.sh phonehub                                 # installs and restarts the new keeper and resolver
+waydroid session stop && sudo waydroid container stop
 cd WORK && sudo ./bake-apps.sh                                # installs the new input-bridge and gb-firstboot.sh into the image
 ```
 
-Then restart Waydroid. `gbos-doctor.py` should report the base device state as OPEN.
+Then start Waydroid (`waydroid session start`). `gbos-doctor.py` should report the base device state as OPEN.
 
 ## Earlier releases
 

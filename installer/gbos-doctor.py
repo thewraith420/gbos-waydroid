@@ -132,7 +132,8 @@ def check_host(a):
         ok("host", "udev rule that hides Waydroid's virtual input devices from the desktop: present")
     elif os.path.exists(P(old)):
         warn("host", "udev rule for Waydroid's virtual input devices is the old 99- version, which lets systemd-logind "
-             "watch waydroid_lid as a lid switch", "re-run try.sh (it installs 65-waydroid-input-ignore.rules)")
+             "watch waydroid_lid as a lid switch",
+             "sudo install -m 644 recipe/65-waydroid-input-ignore.rules /etc/udev/rules.d/ && sudo rm -f /etc/udev/rules.d/99-waydroid-input-ignore.rules && sudo udevadm control --reload-rules")
     else:
         warn("host", "udev rule that hides Waydroid's virtual input devices from the desktop: missing", "it is installed by try.sh")
     conf = read("/etc/modules-load.d/waydroid-iptables.conf")
