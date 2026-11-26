@@ -82,43 +82,110 @@ def phone_send(line):
 
 _tsock = None
 _tdown_until = 0.0        # after a failed connect, don't stall every finger event retrying
+_tkey_ok = False          # True once ping handshake confirms "key" verb support in gb-touch.jar
+_tkey_logged = False
+_tkey_fallback_warned = False
+_MOD_KEYS = {57, 58, 59, 60, 113, 114, 115, 116, 143}
 _gest = {}                # finger id -> [x0, y0, t0, live_ok] for the tap/swipe fallback
 
 
-def touch_send(rest):
-    """Send one live-touch line to the injector. Persistent connection, TCP_NODELAY, no per-event
-    connect. Returns False if it could not be delivered (caller falls back)."""
-    global _tsock, _tdown_until
-    if TOUCH is None or time.time() < _tdown_until:
-        return False
-    data = (TOUCH[2] + " " + rest + "\n").encode()
-    # The injector never writes unprompted, so "readable" can only mean the peer closed. A send to a
-    # closed connection succeeds once before the reset arrives, which would swallow the gesture.
-    if _tsock is not None and not _alive(_tsock):
+def _close_tsock():
+    global _tsock, _tkey_ok
+    if _tsock is not None:
         try:
             _tsock.close()
         except OSError:
             pass
         _tsock = None
+    _tkey_ok = False
+
+
+def _ensure_touch():
+    """Keep one persistent connection to gb-touch.jar, probing capabilities on connect."""
+    global _tsock, _tdown_until, _tkey_ok
+    if TOUCH is None or time.time() < _tdown_until:
+        return False
+    # The injector never writes unprompted, so "readable" can only mean the peer closed. A send to a
+    # closed connection succeeds once before the reset arrives, which would swallow the gesture.
+    if _tsock is not None:
+        if _alive(_tsock):
+            return True
+        _close_tsock()
     for _ in range(2):
         try:
-            if _tsock is None:
-                _tsock = socket.create_connection(TOUCH[:2], timeout=1.0)
-                _tsock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                _tsock.settimeout(1.0)
-                print("touch injector connected", flush=True)
-            _tsock.sendall(data)
+            _tsock = socket.create_connection(TOUCH[:2], timeout=1.0)
+            _tsock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            _tsock.settimeout(0.4)
+            _tsock.sendall((TOUCH[2] + " ping\n").encode())
+            reply = b""
+            try:
+                while b"\n" not in reply and len(reply) < 128:
+                    chunk = _tsock.recv(128)
+                    if not chunk:
+                        break
+                    reply += chunk
+            except OSError:
+                pass
+            _tsock.settimeout(1.0)
+            _tkey_ok = (b"key" in reply)
+            print(f"touch injector connected (keys={'yes' if _tkey_ok else 'no'})", flush=True)
             return True
         except OSError:
-            if _tsock is not None:
-                try:
-                    _tsock.close()
-                except OSError:
-                    pass
-                _tsock = None
+            _close_tsock()
     _tdown_until = time.time() + 3.0
     print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
     return False
+
+
+def touch_send(rest):
+    """Send one live-touch/key line to the injector. Persistent connection, TCP_NODELAY, no per-event
+    connect. Returns False if it could not be delivered (caller falls back)."""
+    global _tdown_until
+    if not _ensure_touch():
+        return False
+    data = (TOUCH[2] + " " + rest + "\n").encode()
+    for _ in range(2):
+        try:
+            if not _ensure_touch():
+                return False
+            _tsock.sendall(data)
+            return True
+        except OSError:
+            _close_tsock()
+    _tdown_until = time.time() + 3.0
+    print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
+    return False
+
+
+def handle_keyev(p):
+    """p = ['keyev', 'C'] | ['keyev', action, keyCode, metaState, repeat]."""
+    global _tkey_logged, _tkey_fallback_warned
+    if len(p) >= 2 and p[1] == "C":
+        if _tkey_ok:
+            touch_send("KC")
+        return
+    if len(p) < 5:
+        return
+    try:
+        action, code, meta, rep = int(p[1]), int(p[2]), int(p[3]), int(p[4])
+    except ValueError:
+        return
+    if action not in (0, 1) or code <= 0:
+        return
+    if TOUCH is not None and _ensure_touch() and _tkey_ok:
+        if touch_send(f"K {action} {code} {meta} {rep}"):
+            if not _tkey_logged:
+                _tkey_logged = True
+                print("live key forwarding active", flush=True)
+            return
+    if action == 0 and rep == 0 and code not in _MOD_KEYS:
+        if not _tkey_fallback_warned:
+            _tkey_fallback_warned = True
+            print("touch injector lacks live key support — using phone_agent key fallback until Re-arm upgrades gb-touch.jar", flush=True)
+        if PHONE is not None:
+            phone_send(f"key {code}")
+        else:
+            run(["keyevent", str(code)])
 
 
 def handle_touch(p):
@@ -164,6 +231,9 @@ def handle(line):
     if not p: return
     if p[0] == "touch":
         handle_touch(p)
+        return
+    if p[0] == "keyev":
+        handle_keyev(p)
         return
     if PHONE is not None:
         print(line, flush=True)

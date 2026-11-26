@@ -208,7 +208,8 @@ function liveSend(verb,id,xy){ sendLine('touch '+verb+' '+id+' '+xy[0]+' '+xy[1]
 function inSystemStrip(px,py){ return px<=90 || px>=PIXEL_W-90 || py<=100 || py>=PIXEL_H-110; }
 var lastScrollT=0, SCROLL_DEBOUNCE=180, BASE_SCROLL_DIST=550;
 var SV_HOOKED=false, INPUT_LISTENERS=[];
-var SV_W=376, SV_H=835, SV_TOP=45, SV_FOCUSED=true, OUR_RECEIVER_PTR=null;
+var SV_W=376, SV_H=835, SV_TOP=45, SV_FOCUSED=true, OUR_RECEIVER_PTR=null, OUR_INNER_RECEIVER_PTR=null;
+var PREV_SV_FOCUSED=true, KEYS_DOWN=0, KEY_LOGGED=false, IN_OUR_CONSUME=false;
 var H_SCALE=1376.0/331.2;
 
 function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime){
@@ -417,6 +418,51 @@ var ACTION_OFF = 0x38;   // verified: tap -> [0, 1], swipe -> [0, 2, 2, …, 1]
 // Our window's screen origin & size, initialized to the `am task resize` defaults and updated dynamically
 // every 500ms by watchSurface() as the user drags or resizes the freeform window.
 var WIN_X = 772, WIN_Y = 80, WIN_W = 376, WIN_H = 880;
+// Verified from libinput.so android::KeyEvent::initialize disassembly:
+// action +0x38, keyCode +0x40, metaState +0x48, repeatCount +0x4c.
+var KEY_ACTION_OFF = 0x38, KEY_CODE_OFF = 0x40, KEY_META_OFF = 0x48, KEY_REPEAT_OFF = 0x4c;
+
+function isOurReceiver(p){
+  if(!p || p.isNull()) return false;
+  if(OUR_RECEIVER_PTR && p.equals(OUR_RECEIVER_PTR)) return true;
+  if(OUR_INNER_RECEIVER_PTR && p.equals(OUR_INNER_RECEIVER_PTR)) return true;
+  return false;
+}
+function releaseHeldKeys(){
+  if(KEYS_DOWN > 0){
+    sendLine('keyev C\n');
+    KEYS_DOWN = 0;
+  }
+}
+function shouldSkipKey(code, meta){
+  if(code <= 0) return true;
+  if((meta & 0x10000) !== 0) return true;                // META_META_ON (Win/Super OS shortcuts)
+  if(code === 117 || code === 118) return true;           // META_LEFT / META_RIGHT
+  if(code === 24 || code === 25 || code === 164) return true;   // Volume Up/Down/Mute
+  if(code === 26 || code === 223 || code === 224) return true;  // Power/Sleep/Wakeup
+  if(code === 220 || code === 221) return true;           // Brightness Down/Up
+  if(code === 120 || code === 187) return true;           // SysRq/PrintScreen, AppSwitch
+  if((code >= 85 && code <= 90) || code === 126 || code === 127) return true; // Media keys
+  return false;
+}
+function forwardNativeKey(ev, src){
+  var action = ev.add(KEY_ACTION_OFF).readS32();
+  if(action !== 0 && action !== 1) return;
+  var code = ev.add(KEY_CODE_OFF).readS32();
+  var meta = ev.add(KEY_META_OFF).readS32();
+  if(shouldSkipKey(code, meta)) return;
+  var rep = ev.add(KEY_REPEAT_OFF).readS32();
+  var cleanMeta = meta & ~0x70000;
+  if(action === 0 && rep === 0) KEYS_DOWN++;
+  else if(action === 1 && KEYS_DOWN > 0) KEYS_DOWN--;
+  sendLine('keyev ' + action + ' ' + code + ' ' + cleanMeta + ' ' + rep + '\n');
+  // Prevent AppCastActivity locally reacting to keys (e.g. Escape/Back closing the window).
+  ev.add(KEY_CODE_OFF).writeS32(0);
+  if(!KEY_LOGGED){
+    KEY_LOGGED = true;
+    log('KEY', 'physical keyboard forwarding active via ' + src);
+  }
+}
 
 function installDispatchHooks(){
   if(SV_HOOKED) return;
@@ -498,6 +544,52 @@ function installDispatchHooks(){
     }));
     SV_HOOKED=true;
     log('LIVE','native C++ input hook installed on MotionEvent::initialize (libinput.so, zero Java hooks)');
+    if(FO.noKeys){
+      log('KEY','[FO] physical keyboard hook DISABLED');
+    } else {
+      var keyHooks = [];
+      try{
+        var onKeyV2 = findExportSub('libandroid_runtime.so',
+          '_ZN7android25NativeInputEventReceiver210onKeyEventENSt3__110unique_ptrINS_8KeyEventENS1_14default_deleteIS3_EEEEj',
+          'NativeInputEventReceiver210onKeyEvent');
+        if(onKeyV2){
+          INPUT_LISTENERS.push(Interceptor.attach(onKeyV2, {
+            onEnter: function(args){
+              try{
+                if(!isOurReceiver(args[0])) return;
+                var evPtr = args[1] ? args[1].readPointer() : null;
+                if(evPtr && !evPtr.isNull()) forwardNativeKey(evPtr, 'v2');
+              }catch(e){ if(dbgErr < 10){ dbgErr++; log('WARN','native key v2: '+e); } }
+            }
+          }));
+          keyHooks.push('NativeInputEventReceiver2::onKeyEvent');
+        }
+      }catch(eKv2){ log('WARN','key v2 hook: '+eKv2); }
+      try{
+        var consumeV1 = findExportSub('libandroid_runtime.so',
+          '_ZN7android24NativeInputEventReceiver13consumeEventsEP7_JNIEnvblPb',
+          'NativeInputEventReceiver13consumeEvents');
+        var keyInitSym = findExportSub('libinput.so',
+          '_ZN7android8KeyEvent10initializeEiijNS_2ui16LogicalDisplayIdENSt3__15arrayIhLm32EEEiiiiiill',
+          'KeyEvent10initializeEiij');
+        if(consumeV1 && keyInitSym){
+          INPUT_LISTENERS.push(Interceptor.attach(consumeV1, {
+            onEnter: function(args){ IN_OUR_CONSUME = isOurReceiver(args[0]); },
+            onLeave: function(){ IN_OUR_CONSUME = false; }
+          }));
+          INPUT_LISTENERS.push(Interceptor.attach(keyInitSym, {
+            onEnter: function(args){ this.ev = args[0]; },
+            onLeave: function(){
+              try{
+                if(IN_OUR_CONSUME && this.ev && !this.ev.isNull()) forwardNativeKey(this.ev, 'v1');
+              }catch(e){ if(dbgErr < 10){ dbgErr++; log('WARN','native key v1: '+e); } }
+            }
+          }));
+          keyHooks.push('NativeInputEventReceiver::consumeEvents+KeyEvent::initialize');
+        }
+      }catch(eKv1){ log('WARN','key v1 hook: '+eKv1); }
+      log('KEY','native C++ keyboard hooks: '+(keyHooks.length ? keyHooks.join(', ') : 'NONE found'));
+    }
   }catch(e){ log('WARN','installDispatchHooks: '+e); }
 }
 function installTouchForward(sv){
@@ -844,7 +936,7 @@ function ensureSurface(recv, cb){
       if(!act){ log('WARN','no active AppCastActivity instance'); cb(false); return; }
       try{ ACT_REF=Java.retain(act); }catch(e){ ACT_REF=act; }
       LAST_ACT_HASH=System.identityHashCode(act);
-      OUR_RECEIVER_PTR=null;
+      OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null;
       if(OLD_SV){
         try{
           var p=OLD_SV.getParent();
@@ -1089,7 +1181,7 @@ function phoneOpen(pkg, nkey, why){
 function reopenInPlace(why, markClosedHash){
   log('WATCH', why+' — re-skinning in place (own decoder, no recast)');
   if(markClosedHash) LAST_CLOSED_ACT_HASH=markClosedHash;
-  SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null;
+  SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null;
   REATTACHING=true;
   attachToReceiver(RECV);
 }
@@ -1142,7 +1234,7 @@ function watchSurface(sv){
             }catch(e){}
             LAST_CLOSED_ACT_HASH=LAST_ACT_HASH;
             LAST_ACT_HASH=System.identityHashCode(reopened);
-            SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null;
+            SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null;
             requestRecast('window reopened (new AppCastActivity)', rpkg);
             return;
           }
@@ -1165,7 +1257,10 @@ function watchSurface(sv){
               if(h>0) SV_H=h;
               if(ACT_REF){
                 var ac=Java.cast(ACT_REF, Activity);
-                SV_FOCUSED=!!ac.hasWindowFocus();
+                var nowFocused=!!ac.hasWindowFocus();
+                if(PREV_SV_FOCUSED && !nowFocused) releaseHeldKeys();
+                SV_FOCUSED=nowFocused;
+                PREV_SV_FOCUSED=nowFocused;
                 var dv=ac.getWindow().getDecorView();
                 if(dv){
                   var dh=dv.getHeight(), dw=dv.getWidth();
@@ -1207,7 +1302,15 @@ function watchSurface(sv){
                     var rptr=f2.getLong(ier);
                     if(rptr){
                       OUR_RECEIVER_PTR=ptr(rptr.toString());
-                      log('LIVE','bound NativeInputEventReceiver ptr='+OUR_RECEIVER_PTR+' SV_TOP='+SV_TOP+' sv='+SV_W+'x'+SV_H);
+                      OUR_INNER_RECEIVER_PTR=null;
+                      try{
+                        var vidx=OUR_RECEIVER_PTR.add(0x18).readU32();
+                        if(vidx===0 || vidx===1){
+                          var inner=OUR_RECEIVER_PTR.add(0x10).readPointer();
+                          if(inner && !inner.isNull()) OUR_INNER_RECEIVER_PTR=inner;
+                        }
+                      }catch(eInner){}
+                      log('LIVE','bound NativeInputEventReceiver ptr='+OUR_RECEIVER_PTR+' inner='+OUR_INNER_RECEIVER_PTR+' SV_TOP='+SV_TOP+' sv='+SV_W+'x'+SV_H);
                     }
                   }
                 }
@@ -1252,13 +1355,14 @@ function watchSurface(sv){
             if(newerAct && !REATTACHING){
               log('WATCH','new AppCastActivity instance detected while live; switching surface');
               LAST_CLOSED_ACT_HASH=LAST_ACT_HASH;
-              SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null;
+              SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null;
               REATTACHING=true;
               attachToReceiver(RECV);
             }
           } else {
             // Window closed or backgrounded: pause stream and stand by for next Phone Hub click or refocus!
             log('WATCH','App Cast surface released — pausing stream and standing by for next Phone Hub app click');
+            releaseHeldKeys();
             LAST_CLOSED_ACT_HASH=LAST_ACT_HASH;
             CLOSED_LOST_FOCUS=false;
             if(FD>=0){ try{ closef(FD); }catch(e){} FD=-1; }
@@ -1266,7 +1370,7 @@ function watchSurface(sv){
             if(ndecAvailable()){ try{ GB_NDEC.destroy(); }catch(e){} NDEC_LIVE=false; }
             else if(JYS){ try{ JYS.u(); }catch(e){} }
             OLD_SV=SVREF;
-            SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; SV_FOCUSED=false;
+            SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null; SV_FOCUSED=false; PREV_SV_FOCUSED=false;
           }
         } else if(RECV && !REATTACHING){
           // Standing by while window is closed/backgrounded: check if user clicked an app in Phone Hub
@@ -1334,18 +1438,20 @@ function revertJavaHooks(){
   SV_HOOKED=false;
 }
 function shutdown(){
+  try{ releaseHeldKeys(); }catch(e){}
   try{ stopStream(); }catch(e){}
   if(globalThis.GB_NDEC){ try{ GB_NDEC.destroy(); }catch(e){} }
   try{
     INPUT_LISTENERS.forEach(function(l){ try{ l.detach(); }catch(e){} });
     INPUT_LISTENERS=[];
+    IN_OUR_CONSUME=false;
   }catch(e){}
   try{
     Java.perform(function(){
       try{ revertJavaHooks(); }catch(e){ log('WARN','shutdown revert: '+e); }
       // drop every retained Java/ByteBuffer reference: these were the GC roots that made a
       // resident replacement unsafe, and they must not outlive the session either.
-      try{ RECV=null; JYS=null; SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; RBB=null; RADDR=null; RCAP=0; pending=new Uint8Array(0); }catch(e){}
+      try{ RECV=null; JYS=null; SVREF=null; ACT_REF=null; OUR_RECEIVER_PTR=null; OUR_INNER_RECEIVER_PTR=null; RBB=null; RADDR=null; RCAP=0; pending=new Uint8Array(0); }catch(e){}
     });
   }catch(e){ log('WARN','shutdown Java.perform: '+e); }
   log('SHUTDOWN','feed_live: Java + native input hooks reverted, sockets closed, refs dropped ('+fed+' frames)');

@@ -223,14 +223,16 @@ def probe_touch_injector(phone_ip, token):
 
 
 def ensure_touch_injector(pixel, phone_ip, token, allow_ip):
-    """Find a running injector, or (with adb) start one without touching the gesture agent."""
+    """Find a running injector, or (with adb) start/upgrade one without touching the gesture agent."""
     global TOUCH_PORT
-    port = probe_touch_injector(phone_ip, token) if phone_ip else None
-    if port is None and pixel and _push_touch_files(pixel):
+    port, caps = phone_rearm.probe_touch_caps(phone_ip, token) if phone_ip else (None, "")
+    if (port is None or "key" not in caps) and pixel and _push_touch_files(pixel):
         adb(pixel, "push", str(APPDIR / "phone_agent.sh"), "/data/local/tmp/gb-phone-agent.sh")
         r = adb(pixel, "shell", "sh", "/data/local/tmp/gb-phone-agent.sh", "touch", token,
                 allow_ip or "", timeout=60)
-        port = _parse_touch_port(r.stdout or "")
+        new_port = _parse_touch_port(r.stdout or "")
+        if new_port is not None:
+            port = new_port
     TOUCH_PORT = port
     log(f"live touch injector: {'port ' + str(port) if port else 'not available — tap/swipe replay'}")
     return port

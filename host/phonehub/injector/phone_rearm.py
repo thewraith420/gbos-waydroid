@@ -306,16 +306,17 @@ def start_agent(serial, token, want_port):
     return agent_port, touch_port
 
 
-def probe_touch_injector(phone_ip, token):
-    """Port of a running live touch injector (8110..8129), or None."""
+def probe_touch_caps(phone_ip, token):
+    """(port, pong_reply) for a running live touch injector (8110..8129), or (None, '')."""
     for p in range(8110, 8130):
         s = None
         try:
             s = socket.create_connection((phone_ip, p), timeout=0.6)
             s.settimeout(0.4)
             s.sendall((token + " ping\n").encode())
-            if s.recv(16).startswith(b"pong"):
-                return p
+            rep = s.recv(64)
+            if rep.startswith(b"pong"):
+                return p, rep.decode("utf-8", "replace").strip()
         except OSError:
             pass
         finally:
@@ -324,7 +325,12 @@ def probe_touch_injector(phone_ip, token):
                     s.close()
                 except OSError:
                     pass
-    return None
+    return None, ""
+
+
+def probe_touch_injector(phone_ip, token):
+    """Port of a running live touch injector (8110..8129), or None."""
+    return probe_touch_caps(phone_ip, token)[0]
 
 
 def _host_lan_ip():
@@ -431,9 +437,47 @@ def handle(args, req):
     # Fast path: Is the gesture agent already alive and responding to our token?
     alive_port = check_alive_agent(phone_ip, args.token, args.agent_port)
     if alive_port:
-        touch_port = probe_touch_injector(phone_ip, args.token)
-        log(f"agent is ALREADY alive on {phone_ip}:{alive_port}"
-            f"{f' (live touch :{touch_port})' if touch_port else ''} — touch forwarding is active")
+        touch_port, touch_caps = probe_touch_caps(phone_ip, args.token)
+        need_touch_upgrade = (
+            not req_upper.startswith("STATUS")
+            and not req_upper.startswith("PROBE")
+            and TOUCH_JAR.exists()
+            and (touch_port is None or "key" not in touch_caps)
+        )
+        if not need_touch_upgrade:
+            log(f"agent is ALREADY alive on {phone_ip}:{alive_port}"
+                f"{f' (live touch :{touch_port})' if touch_port else ''} — touch forwarding is active")
+            restart_relay(None, phone_ip, alive_port, args.token, touch_port=touch_port)
+            return f"ALREADY_ARMED {alive_port}"
+
+        log(f"agent is alive on {phone_ip}:{alive_port}, upgrading live touch/key injector (port={touch_port}, caps='{touch_caps}')")
+        lo, hi = scan_range(args)
+        skip = {args.listen_port, args.agent_port, 8097, 8098, 8099, 8100}
+        bad_ports = set(STATIC_BAD_PORTS)
+        serial = None
+        for attempt in range(min(2, args.wait_tries)):
+            serial, cert_rejected = find_adbd(phone_ip, skip, lo, hi, bad_ports)
+            if cert_rejected or serial:
+                break
+            time.sleep(1.5)
+        if serial:
+            adb("-s", serial, "push", str(TOUCH_JAR), TOUCH_REMOTE, timeout=60)
+            adb("-s", serial, "push", str(APPDIR / "phone_agent.sh"), AGENT, timeout=60)
+            adb("-s", serial, "shell", "chmod", "755", AGENT)
+            r = adb("-s", serial, "shell", "sh", AGENT, "touch", args.token, _host_lan_ip() or "", timeout=60)
+            out = (r.stdout or "").strip()
+            for line in out.splitlines():
+                log(f"agent: {line}")
+            m_touch = re.search(r"TOUCH_PORT=(\d+)\s+TOUCH_READY", out)
+            if m_touch:
+                touch_port = int(m_touch.group(1))
+            restart_relay(serial, phone_ip, alive_port, args.token, touch_port=touch_port)
+            if args.disable_after:
+                r = adb("-s", serial, "shell", "settings", "put", "global", "adb_wifi_enabled", "0")
+                log(f"wireless debugging off again ({(r.stdout or r.stderr).strip() or 'ok'})")
+                adb("disconnect", serial)
+            return f"OK {alive_port}"
+        log("adbd not available for live key upgrade — keeping existing agent")
         restart_relay(None, phone_ip, alive_port, args.token, touch_port=touch_port)
         return f"ALREADY_ARMED {alive_port}"
 
