@@ -7,6 +7,7 @@ Allows the Waydroid home screen widget to trigger gb-reconnect.sh and query stat
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "lib"))
 import gbos_env  # noqa: E402  shared runtime config: private run dir, container/LAN discovery
+import gb_continuity  # noqa: E402  Android 17 Task Continuity ("Continue on") bridge
 import json
 import os
 import re
@@ -19,7 +20,9 @@ from pathlib import Path
 
 HOST = gbos_env.BRIDGE_IP
 PORT = 8092
+CONTINUITY_PORT = int(os.environ.get("GB_CONTINUITY_PORT", "8095"))
 RECONNECT_SCRIPT = Path(__file__).resolve().parent / "gb-reconnect.sh"
+_continuity = None
 
 
 def get_status():
@@ -93,6 +96,15 @@ def _wake_and_start_ambient(am_args):
     return _run_container_shell(cmd)
 
 
+def _open_app_in_cast(pkg):
+    return _wake_and_start_ambient(
+        "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
+        ".multidevicesync.appcast.receiver.AppCastActivity"
+        " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
+        f" --es packageName {shlex.quote(pkg)} --el sessionId 12345"
+    )
+
+
 def handle_client(conn, addr):
     try:
         conn.settimeout(15)
@@ -131,13 +143,19 @@ def handle_client(conn, addr):
             if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", arg):
                 conn.sendall(b'{"error":"invalid_package"}\n')
             else:
-                _wake_and_start_ambient(
-                    "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
-                    ".multidevicesync.appcast.receiver.AppCastActivity"
-                    " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
-                    f" --es packageName {shlex.quote(arg)} --el sessionId 12345"
-                )
+                _open_app_in_cast(arg)
                 conn.sendall((json.dumps({"status": "opened", "pkg": arg}) + "\n").encode())
+        elif verb == "CONTINUITY_STATUS":
+            st = _continuity.status() if _continuity else {"transport": "disabled"}
+            conn.sendall((json.dumps(st) + "\n").encode())
+        elif verb == "CONTINUITY_TEST":
+            if _continuity is None:
+                conn.sendall(b'{"error":"continuity_disabled"}\n')
+            elif arg == "none" or re.fullmatch(r"[A-Za-z0-9._-]{1,256}", arg):
+                _continuity.inject_test_pkg(arg)
+                conn.sendall((json.dumps({"status": "injected", "pkg": arg}) + "\n").encode())
+            else:
+                conn.sendall(b'{"error":"invalid_package"}\n')
         else:
             conn.sendall(b'{"error":"unknown_command"}\n')
     except Exception as e:
@@ -150,6 +168,12 @@ def handle_client(conn, addr):
 
 
 def main():
+    global _continuity
+    _continuity = gb_continuity.ContinuityBridge(
+        gbos_env, _run_container_shell, _open_app_in_cast, port=CONTINUITY_PORT
+    )
+    _continuity.start()
+
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:

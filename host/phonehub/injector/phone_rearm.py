@@ -442,7 +442,7 @@ def handle(args, req):
             not req_upper.startswith("STATUS")
             and not req_upper.startswith("PROBE")
             and TOUCH_JAR.exists()
-            and (touch_port is None or "key" not in touch_caps)
+            and (touch_port is None or "key" not in touch_caps or "fg" not in touch_caps)
         )
         if not need_touch_upgrade:
             log(f"agent is ALREADY alive on {phone_ip}:{alive_port}"

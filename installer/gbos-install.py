@@ -1066,12 +1066,12 @@ def stage_native(a, W):
 
 # App build order matters: svc_stub_apk creates the signing key that the others sign with.
 APPS = ["svc_stub_apk", "audioctl_app", "bthal_app", "ethcfg_app", "fakewifi_app", "lan_wifi_overlay",
-        "dbexec_app", "userrestrict_app", "wallset_app", "waydroid_platform"]
+        "dbexec_app", "userrestrict_app", "wallset_app", "waydroid_platform", "continuity_bridge"]
 APPS_PHONE_HUB = ["gbcast_app", "gbhub_widget", "touch_injector"]
 APK_OUT = {"svc_stub_apk": "serviceability-stub.apk", "audioctl_app": "audioctl.apk", "bthal_app": "bthal.apk",
            "ethcfg_app": "ethcfg.apk", "fakewifi_app": "fakewifi.apk", "lan_wifi_overlay": "lan-wifi-overlay.apk",
            "dbexec_app": "dbexec.apk", "userrestrict_app": "userrestrict.apk", "wallset_app": "wallset.apk",
-           "waydroid_platform": "waydroid-platform.jar"}
+           "waydroid_platform": "waydroid-platform.jar", "continuity_bridge": "gb-continuity.jar"}
 
 
 def stage_apps(a, W, D, lock, st):

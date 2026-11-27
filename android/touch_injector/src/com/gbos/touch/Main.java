@@ -171,7 +171,9 @@ public class Main {
                 if (p.length < 2 || !token.equals(p[0])) continue;
                 String v = p[1];
                 try {
-                    if (v.equals("ping")) { out.write("pong v2 key\n".getBytes()); out.flush(); }
+                    if (v.equals("ping")) { out.write("pong v4 key fg close\n".getBytes()); out.flush(); }
+                    else if (v.equals("fg")) { out.write(("fg " + queryForegroundPackage() + "\n").getBytes()); out.flush(); }
+                    else if (v.equals("close") && p.length >= 3) { closePackage(p[2]); out.write("ok\n".getBytes()); out.flush(); }
                     else if (v.equals("D") && p.length >= 5) down(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
                     else if (v.equals("M") && p.length >= 5) move(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
                     else if (v.equals("U") && p.length >= 5) up(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
@@ -322,6 +324,95 @@ public class Main {
             System.out.println("inject failed: " + t);
         } finally {
             ev.recycle();
+        }
+    }
+
+    /**
+     * Return the current foreground package name on the phone, or "none" if the screen is off,
+     * the keyguard is locked, or no app activity is focused. Uses binder reflection directly
+     * (no subprocess fork) so 2 s polling has negligible CPU/battery cost.
+     */
+    private static String queryForegroundPackage() {
+        try {
+            Class<?> sm = Class.forName("android.os.ServiceManager");
+            Class<?> ib = Class.forName("android.os.IBinder");
+            Method getSvc = sm.getMethod("getService", String.class);
+
+            // Screen off -> none
+            try {
+                Object pb = getSvc.invoke(null, "power");
+                if (pb != null) {
+                    Object pm = Class.forName("android.os.IPowerManager$Stub")
+                            .getMethod("asInterface", ib).invoke(null, pb);
+                    if (!(Boolean) pm.getClass().getMethod("isInteractive").invoke(pm)) {
+                        return "none";
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            // Keyguard locked -> none
+            try {
+                Object wb = getSvc.invoke(null, "window");
+                if (wb != null) {
+                    Object wm = Class.forName("android.view.IWindowManager$Stub")
+                            .getMethod("asInterface", ib).invoke(null, wb);
+                    if ((Boolean) wm.getClass().getMethod("isKeyguardLocked").invoke(wm)) {
+                        return "none";
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            // Focused root task -> topActivity packageName
+            Object ab = getSvc.invoke(null, "activity_task");
+            if (ab != null) {
+                Object atm = Class.forName("android.app.IActivityTaskManager$Stub")
+                        .getMethod("asInterface", ib).invoke(null, ab);
+                Object info = atm.getClass().getMethod("getFocusedRootTaskInfo").invoke(atm);
+                if (info != null) {
+                    Object top = info.getClass().getField("topActivity").get(info);
+                    if (top != null) {
+                        String pkg = (String) top.getClass().getMethod("getPackageName").invoke(top);
+                        if (pkg != null && !pkg.isEmpty()) return pkg;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.out.println("fg query failed: " + t);
+        }
+        return "none";
+    }
+
+    /**
+     * Close a foreground app on the phone when its App Cast window is closed:
+     * send KEYCODE_HOME first (smooth return to home screen), then force-stop the package
+     * via IActivityManager (skipping system UI / launchers / com.gbos.cast).
+     */
+    private static void closePackage(String pkg) {
+        if (pkg == null || !pkg.matches("[A-Za-z0-9._-]{1,256}")) return;
+        if (pkg.equals("android") || pkg.equals("com.android.systemui")
+                || pkg.equals("com.gbos.cast")
+                || pkg.equals("com.google.android.apps.nexuslauncher")
+                || pkg.equals("com.android.launcher3")) {
+            return;
+        }
+        try {
+            injectKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HOME, 0, 0);
+            injectKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_HOME, 0, 0);
+        } catch (Throwable ignored) {}
+        try {
+            Class<?> sm = Class.forName("android.os.ServiceManager");
+            Class<?> ib = Class.forName("android.os.IBinder");
+            Object ab = sm.getMethod("getService", String.class).invoke(null, "activity");
+            if (ab != null) {
+                Object am = Class.forName("android.app.IActivityManager$Stub")
+                        .getMethod("asInterface", ib).invoke(null, ab);
+                // userId = -2 (UserHandle.USER_CURRENT)
+                am.getClass().getMethod("forceStopPackage", String.class, int.class)
+                        .invoke(am, pkg, -2);
+                System.out.println("closed package " + pkg);
+            }
+        } catch (Throwable t) {
+            System.out.println("closePackage failed for " + pkg + ": " + t);
         }
     }
 }

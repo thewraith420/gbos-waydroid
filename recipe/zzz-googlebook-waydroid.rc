@@ -419,6 +419,18 @@ service gb-fridaserver /system/bin/sh /system/bin/gb-fridaserver.sh
 on property:sys.boot_completed=1
     start gb-fridaserver
 
+# gb-continuity: attaches a CompanionDeviceManager RawTransport to the host continuity bridge
+# (192.168.240.1:8095) so Android 17's native taskbar "Continue on" pill shows the phone's
+# live foreground app and hands off natively or via App Cast.
+service gb-continuity /system/bin/sh /system/bin/gb-continuity.sh
+    class main
+    user root
+    group root inet
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-continuity
+
 # Googlebook Sign-In Unlock Daemon: automatically dismisses MinuteMaid "Checking info..."
 # loading overlay by invoking window.mm.showView() over DevTools unix socket.
 service unlock-signin /system/bin/unlock-signin --foreground
