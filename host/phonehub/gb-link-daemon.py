@@ -9,6 +9,8 @@ _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 
 import gbos_env  # noqa: E402  shared runtime config: private run dir, container/LAN discovery
 import json
 import os
+import re
+import shlex
 import socket
 import subprocess
 import threading
@@ -67,37 +69,75 @@ def get_status():
     return status
 
 
+def _run_container_shell(shell_cmd):
+    c = gbos_env.container()
+    r = subprocess.run(["adb", "-s", c, "shell", shell_cmd], capture_output=True, timeout=8)
+    if r.returncode != 0:
+        subprocess.run(["adb", "connect", c], capture_output=True, timeout=5)
+        r = subprocess.run(["adb", "-s", c, "shell", shell_cmd], capture_output=True, timeout=8)
+    return r
+
+
+def _wake_and_start_ambient(am_args):
+    # When the full GBOS window is closed (waydroid.active_apps=none), hwcomposer stays in
+    # closed_mode and hides all host Wayland windows even if an activity starts. Setting
+    # waydroid.active_apps wakes the display/multi-window host surface without disturbing an
+    # already-open full Waydroid desktop.
+    cmd = (
+        'cur=$(getprop waydroid.active_apps); '
+        'if [ -z "$cur" ] || [ "$cur" = "none" ]; then '
+        'setprop waydroid.active_apps com.google.ambient.streaming; '
+        'fi; '
+        + am_args
+    )
+    return _run_container_shell(cmd)
+
+
 def handle_client(conn, addr):
     try:
         conn.settimeout(15)
         raw = conn.recv(1024).decode("utf-8", "replace").strip()
-        cmd = raw.upper()
+        parts = raw.split(None, 1)
+        verb = parts[0].upper() if parts else ""
+        arg = parts[1].strip() if len(parts) > 1 else ""
 
-        if cmd == "STATUS":
+        if verb == "STATUS":
             st = get_status()
             conn.sendall((json.dumps(st) + "\n").encode())
-        elif cmd.startswith("RECONNECT") or cmd.startswith("FIX"):
+        elif verb.startswith("RECONNECT") or verb.startswith("FIX"):
             # Trigger reconnect in background thread so caller gets instant ack
             def run_rec():
                 subprocess.run(["bash", str(RECONNECT_SCRIPT)], capture_output=True)
             threading.Thread(target=run_rec, daemon=True).start()
             conn.sendall(b'{"status":"reconnecting"}\n')
-        elif cmd.startswith("LAUNCH_APPCAST"):
-            subprocess.run([
-                "adb", "-s", gbos_env.container(), "shell",
-                "am start --user 10 -n com.google.ambient.streaming/.multidevicesync.appcast.receiver.launcher.RemoteAppsLauncherActivity"
-            ], capture_output=True)
+        elif verb.startswith("LAUNCH_APPCAST"):
+            _wake_and_start_ambient(
+                "am start --user 10 -n com.google.ambient.streaming/"
+                ".multidevicesync.appcast.receiver.launcher.RemoteAppsLauncherActivity"
+            )
             conn.sendall(b'{"status":"launched"}\n')
-        elif cmd.startswith("OPEN_PHONE_HOME"):
-            # The widget's Open button: a cast window on the phone's home screen. Same intent the Phone Hub
+        elif verb.startswith("OPEN_PHONE_HOME"):
+            # The widget/extension Open button: a cast window on the phone's home screen. Same intent the Phone Hub
             # sends for an app tap (CLEAR_TASK so onCreate sees OUR extras); the "app" is the home sentinel
             # that feed_live.js turns into wake + Home on the phone.
-            subprocess.run([
-                "adb", "-s", gbos_env.container(), "shell",
-                "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/.multidevicesync.appcast.receiver.AppCastActivity"
-                " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5 --es packageName gbos.phone.home --el sessionId 12345"
-            ], capture_output=True)
+            _wake_and_start_ambient(
+                "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
+                ".multidevicesync.appcast.receiver.AppCastActivity"
+                " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
+                " --es packageName gbos.phone.home --el sessionId 12345"
+            )
             conn.sendall(b'{"status":"opened"}\n')
+        elif verb == "OPEN_APP":
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", arg):
+                conn.sendall(b'{"error":"invalid_package"}\n')
+            else:
+                _wake_and_start_ambient(
+                    "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
+                    ".multidevicesync.appcast.receiver.AppCastActivity"
+                    " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
+                    f" --es packageName {shlex.quote(arg)} --el sessionId 12345"
+                )
+                conn.sendall((json.dumps({"status": "opened", "pkg": arg}) + "\n").encode())
         else:
             conn.sendall(b'{"error":"unknown_command"}\n')
     except Exception as e:

@@ -2,8 +2,9 @@
 # Install (or remove) the host-side GBOS services.
 #
 #   host/install-host.sh phonehub [--no-start] [--work DIR] [--touch-jar FILE] [--prefix DIR]   as your normal user
-#   sudo host/install-host.sh system [lan] [wifi] [bt]                              as root
-#   host/install-host.sh <phonehub|system ...> --remove
+#   host/install-host.sh gnome-extension [--no-start]                                        as your normal user
+#   sudo host/install-host.sh system [lan] [wifi] [bt]                                        as root
+#   host/install-host.sh <phonehub|gnome-extension|system ...> --remove
 #
 # Add --stage DIR to only render the files into DIR (no systemctl, no pip, no downloads); it is how the
 # installer is tested.
@@ -178,8 +179,42 @@ do_phonehub() {
     fi
 }
 
+do_gnome_extension() {
+    local uuid="gbos-phonehub@thewraith420"
+    local src="$HERE/gnome-extension/$uuid"
+    local ext_root="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions"
+    [ -n "$STAGE" ] && ext_root="$STAGE/gnome-shell/extensions"
+    local dst="$ext_root/$uuid"
+    [ "$(id -u)" != 0 ] || [ -n "$STAGE" ] || die "run the gnome-extension part as your normal user, not root"
+
+    if [ "$REMOVE" = 1 ]; then
+        if [ -z "$STAGE" ] && command -v gnome-extensions >/dev/null; then
+            gnome-extensions disable "$uuid" 2>/dev/null || true
+        fi
+        rm -rf "$dst"
+        say "removed GNOME extension: $dst"
+        return 0
+    fi
+
+    [ -d "$src" ] || die "missing GNOME extension source at $src"
+    mkdir -p "$dst"
+    install -D -m 644 "$src/metadata.json" "$dst/metadata.json"
+    install -D -m 644 "$src/stylesheet.css" "$dst/stylesheet.css"
+    install -D -m 644 "$src/extension.js" "$dst/extension.js"
+    say "installed GNOME extension to $dst"
+
+    if [ -z "$STAGE" ] && [ "$START" = 1 ] && command -v gnome-extensions >/dev/null; then
+        if gnome-extensions enable "$uuid" 2>/dev/null; then
+            say "enabled GNOME extension $uuid"
+        else
+            say "note: could not enable $uuid automatically (if running on Wayland, log out/in then run: gnome-extensions enable $uuid)"
+        fi
+    fi
+}
+
 case "$MODE" in
-    system)   do_system ;;
-    phonehub) do_phonehub ;;
-    *) sed -n '2,22p' "$0"; exit 2 ;;
+    system)          do_system ;;
+    phonehub)        do_phonehub ;;
+    gnome-extension) do_gnome_extension ;;
+    *) sed -n '2,23p' "$0"; exit 2 ;;
 esac

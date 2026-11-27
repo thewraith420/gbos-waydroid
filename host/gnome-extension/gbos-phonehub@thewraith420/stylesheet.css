@@ -1,0 +1,124 @@
+.gbos-panel-box {
+    spacing: 5px;
+}
+
+.gbos-panel-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+}
+
+.gbos-dot-connected {
+    background-color: #33d17a;
+}
+
+.gbos-dot-live {
+    background-color: #3584e4;
+}
+
+.gbos-dot-offline {
+    background-color: #77767b;
+}
+
+.gbos-card {
+    padding: 8px 12px 10px 12px;
+    spacing: 8px;
+    width: 344px;
+}
+
+.gbos-card-header {
+    spacing: 8px;
+}
+
+.gbos-card-title {
+    font-weight: bold;
+    font-size: 1em;
+}
+
+.gbos-card-sub {
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.88em;
+}
+
+.gbos-open-btn {
+    margin-top: 4px;
+    padding: 7px 14px;
+    border-radius: 99px;
+    background-color: #3584e4;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.gbos-open-btn:hover,
+.gbos-open-btn:focus {
+    background-color: #4a94ee;
+}
+
+.gbos-open-btn:active {
+    background-color: #1c71d8;
+}
+
+.gbos-open-btn-box {
+    spacing: 6px;
+}
+
+.gbos-apps-section {
+    padding: 4px 12px 8px 12px;
+    spacing: 8px;
+    width: 344px;
+}
+
+.gbos-search-entry {
+    padding: 6px 10px;
+    border-radius: 99px;
+}
+
+.gbos-section-label {
+    font-size: 0.78em;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.6);
+    padding-top: 2px;
+}
+
+.gbos-apps-scroll {
+    max-height: 280px;
+}
+
+.gbos-apps-rows {
+    spacing: 4px;
+}
+
+.gbos-app-row {
+    spacing: 4px;
+}
+
+.gbos-app-tile {
+    border-radius: 10px;
+    padding: 6px 4px;
+}
+
+.gbos-app-tile:hover,
+.gbos-app-tile:focus {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.gbos-app-tile:active {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.gbos-app-tile-box {
+    spacing: 4px;
+}
+
+.gbos-app-label {
+    font-size: 0.78em;
+    text-align: center;
+    max-width: 72px;
+}
+
+.gbos-empty-label {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85em;
+    text-align: center;
+    padding: 14px 8px;
+}

@@ -1,0 +1,13 @@
+{
+  "uuid": "gbos-phonehub@thewraith420",
+  "name": "GBOS Phone Hub",
+  "description": "Shows GBOS Cross-Device connection status and opens App Cast directly to your phone's home screen.",
+  "version": 1,
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48"
+  ],
+  "url": "https://github.com/thewraith420/gbos-waydroid"
+}
