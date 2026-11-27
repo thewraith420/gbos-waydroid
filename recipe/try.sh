@@ -147,6 +147,7 @@ EXTRA_FILES="$EXTRA_FILES $W/vold_prepare_subdirs-gb:system/bin/vold_prepare_sub
 EXTRA_FILES="$EXTRA_FILES $W/donor-task/vendor.waydroid.task@1.0-service:system/bin/hw/vendor.waydroid.task@1.0-service:755"
 EXTRA_FILES="$EXTRA_FILES $W/donor-task/vendor.waydroid.task@1.0.so:system/lib64/vendor.waydroid.task@1.0.so:644"
 EXTRA_FILES="$EXTRA_FILES $W/donor-task/vendor.waydroid.task@1.0-service.rc:system/etc/init/vendor.waydroid.task@1.0-service.rc:644"
+EXTRA_FILES="$EXTRA_FILES $W/donor-task/vendor.waydroid.display@1.0.so:system/lib64/vendor.waydroid.display@1.0.so:644"
 # bpfloader patched so userdebug ringbuf test failure does not panic BpfLoader-rs. See patch-bpfloader.py.
 EXTRA_FILES="$EXTRA_FILES $W/bpfloader-gb:system/bin/bpfloader:755"
 # Test BPF programs required on userdebug builds by BpfLoader-rs (missing from Googlebook user image; from ATV16 donor)

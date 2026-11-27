@@ -959,6 +959,7 @@ def copy_tree(src, dst):
 
 
 NATIVE_NDK = ["input-bridge", "vpd-stub"]
+NATIVE_NDK_OPT = ["libgb-sf-waydroid.so", "libgb-hwc-waydroid.so"]
 NATIVE_HOST = {"unlock-signin": "unlock-signin", "eval-js": "eval-js",
                "gb-dhcpd": "fakeap/gb-dhcpd", "gb-portrelay": "portrelay/gb-portrelay"}
 
@@ -1027,38 +1028,50 @@ def stage_native(a, W):
     if not shutil.which("make") or not shutil.which("gcc"):
         die("make and gcc are needed to build the native helpers")
     if a.prebuilt:
-        # Only the two Android binaries need the NDK; the host helpers are plain C and build with gcc.
+        # Only the Android binaries need the NDK; the host helpers are plain C and build with gcc.
+        staged_ndk = list(NATIVE_NDK)
         for n in NATIVE_NDK:
             p = os.path.join(a.prebuilt, n)
             if not os.path.isfile(p):
                 die("--prebuilt %s lacks %s" % (a.prebuilt, n))
             check_prebuilt(p, n, pre, strict=True)
+        for n in NATIVE_NDK_OPT:
+            p = os.path.join(a.prebuilt, n)
+            if os.path.isfile(p):
+                check_prebuilt(p, n, pre, strict=True)
+                staged_ndk.append(n)
+            else:
+                say("note   %-18s not in prebuilt dir: skipped (multi-window shim unavailable)" % n)
         run(["make", "-C", os.path.join(ROOT, "native"), "OUT=" + out, "host"])
         ndk_src = a.prebuilt
     elif a.ndk:
         run(["make", "-C", os.path.join(ROOT, "native"), "OUT=" + out, "NDK=" + a.ndk, "all"])
         ndk_src = out
-        for n in NATIVE_NDK:
+        staged_ndk = NATIVE_NDK + NATIVE_NDK_OPT
+        for n in staged_ndk:
             check_prebuilt(os.path.join(out, n), n, pre, strict=False)
     else:
         die("input-bridge and vpd-stub run on Android and need either the NDK (--ndk DIR|auto) or the prebuilt "
             "release assets (--prebuilt DIR, from `gbos-install.py fetch-prebuilt`).")
-    for n in NATIVE_NDK:
-        shutil.copy2(os.path.join(ndk_src, n), os.path.join(W, n))
+    for n in staged_ndk:
+        dst = os.path.join(W, n)
+        shutil.copy2(os.path.join(ndk_src, n), dst)
+        os.chmod(dst, 0o644 if n.endswith(".so") else 0o755)
     for n, rel in NATIVE_HOST.items():
         os.makedirs(os.path.dirname(os.path.join(W, rel)), exist_ok=True)
-        shutil.copy2(os.path.join(out, n), os.path.join(W, rel))
-    for n in NATIVE_NDK + list(NATIVE_HOST.values()):
-        os.chmod(os.path.join(W, n), 0o755)
+        dst = os.path.join(W, rel)
+        shutil.copy2(os.path.join(out, n), dst)
+        os.chmod(dst, 0o755)
 
 
 # App build order matters: svc_stub_apk creates the signing key that the others sign with.
 APPS = ["svc_stub_apk", "audioctl_app", "bthal_app", "ethcfg_app", "fakewifi_app", "lan_wifi_overlay",
-        "dbexec_app", "userrestrict_app", "wallset_app"]           # the last three are run by host/provision/gb-userfixes.sh
+        "dbexec_app", "userrestrict_app", "wallset_app", "waydroid_platform"]
 APPS_PHONE_HUB = ["gbcast_app", "gbhub_widget", "touch_injector"]
 APK_OUT = {"svc_stub_apk": "serviceability-stub.apk", "audioctl_app": "audioctl.apk", "bthal_app": "bthal.apk",
            "ethcfg_app": "ethcfg.apk", "fakewifi_app": "fakewifi.apk", "lan_wifi_overlay": "lan-wifi-overlay.apk",
-           "dbexec_app": "dbexec.apk", "userrestrict_app": "userrestrict.apk", "wallset_app": "wallset.apk"}
+           "dbexec_app": "dbexec.apk", "userrestrict_app": "userrestrict.apk", "wallset_app": "wallset.apk",
+           "waydroid_platform": "waydroid-platform.jar"}
 
 
 def stage_apps(a, W, D, lock, st):
@@ -1174,8 +1187,11 @@ def cmd_prepare(a):
     dt = os.path.join(W, "donor-task")
     for img_path, name in [("/system/bin/hw/vendor.waydroid.task@1.0-service", "vendor.waydroid.task@1.0-service"),
                            ("/system/etc/init/vendor.waydroid.task@1.0-service.rc", "vendor.waydroid.task@1.0-service.rc"),
-                           ("/system/system_ext/lib64/vendor.waydroid.task@1.0.so", "vendor.waydroid.task@1.0.so")]:
+                           ("/system/system_ext/lib64/vendor.waydroid.task@1.0.so", "vendor.waydroid.task@1.0.so"),
+                           ("/system/system_ext/lib64/vendor.waydroid.display@1.0.so", "vendor.waydroid.display@1.0.so")]:
         cat_erofs(atv16, img_path, os.path.join(dt, name))
+    run([sys.executable, os.path.join(ROOT, "recipe", "patch-waydroid-task.py"),
+         os.path.join(dt, "vendor.waydroid.task@1.0-service")])
 
     # 6) the library closure of the donor binaries
     if os.path.isdir(os.path.join(W, "donor-a16", "lib")) and st.done("donor", "1", [os.path.join(W, "donor-a16")]):

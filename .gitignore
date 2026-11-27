@@ -1,5 +1,6 @@
 # Build artifacts — the installer builds and signs the apps; never commit outputs
 android/*/build/
+native/out/
 **/build/
 *.apk
 *.dex

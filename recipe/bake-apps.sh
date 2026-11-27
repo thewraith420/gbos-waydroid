@@ -34,7 +34,7 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$OV/system/lib64/libselinux.so" /var/lib/waydroid/overlay_rw/system/system/lib64/libselinux.so   # host-side rm: no whiteout
     rm -f "$OV/product/overlay/GbLanWifiOverlay.apk"; rmdir "$OV/product/overlay" 2>/dev/null || true
     rm -f "$OV/system/bin/gb-fakeap.sh" "$OV/system/bin/gb-fridaserver.sh" "$OV/system/bin/gb-dhcpd" "$OV/system/bin/gb-portrelay" "$OV/system/bin/gb-portrelay.sh" "$OV/system/bin/gb-wifi.sh" "$OV/system/bin/gb-storagemount.sh" "$OV/system/etc/fakewifi.apk" "$OV/vendor/etc/vintf/manifest/android.hardware.wifi.xml" "$OV/vendor/etc/init/android.hardware.cas@1.2-service.rc" "$OV/vendor/etc/init/android.hardware.media.omx@1.0-service.rc" "$OV/vendor/etc/init/android.hardware.camera.provider@2.7-external-service.rc" "$OV/vendor/etc/init/android.hardware.wifi.supplicant-service.rc" "$OV/system/etc/init/udsattestation.rc"; rmdir "$OV/vendor/etc/vintf/manifest" 2>/dev/null || true
-    rm -f "$OV/system/bin/gb-lan.sh" "$OV/system/etc/ethcfg.apk" "$OV/system/bin/gb-bthal.sh" "$OV/system/etc/bthal.apk" "$OV/system/bin/gb-audiofix.sh" "$OV/vendor/etc/permissions/android.hardware.bluetooth_le.xml" "$OV/vendor/etc/permissions/android.hardware.usb.host.xml" "$OV/system/etc/audioctl.apk" "$OV/system/lib64/libaudiohal@7.1.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/libaudiohal@7.1.so" "$OV/system/lib64/libinputflinger.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/libinputflinger.so" "$OV/system/bin/input-bridge" "/var/lib/waydroid/overlay_rw/system/system/bin/input-bridge"
+    rm -f "$OV/system/bin/gb-lan.sh" "$OV/system/etc/ethcfg.apk" "$OV/system/bin/gb-bthal.sh" "$OV/system/etc/bthal.apk" "$OV/system/bin/gb-audiofix.sh" "$OV/system/bin/gb-waydroidplatform.sh" "$OV/system/etc/waydroid-platform.jar" "$OV/system/bin/gb-surfaceflinger.sh" "$OV/system/lib64/libgb-sf-waydroid.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/libgb-sf-waydroid.so" "$OV/system/lib64/vendor.waydroid.display@1.0.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/vendor.waydroid.display@1.0.so" "$OV/system/bin/hw/vendor.waydroid.task@1.0-service" "/var/lib/waydroid/overlay_rw/system/system/bin/hw/vendor.waydroid.task@1.0-service" "$OV/system/bin/gb-hwcomposer.sh" "$OV/vendor/lib64/libgb-hwc-waydroid.so" "/var/lib/waydroid/overlay_rw/vendor/vendor/lib64/libgb-hwc-waydroid.so" "$OV/vendor/etc/permissions/android.hardware.bluetooth_le.xml" "$OV/vendor/etc/permissions/android.hardware.usb.host.xml" "$OV/system/etc/audioctl.apk" "$OV/system/lib64/libaudiohal@7.1.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/libaudiohal@7.1.so" "$OV/system/lib64/libinputflinger.so" "/var/lib/waydroid/overlay_rw/system/system/lib64/libinputflinger.so" "$OV/system/bin/input-bridge" "/var/lib/waydroid/overlay_rw/system/system/bin/input-bridge"
     rmdir "$OV/product/app" "$OV/product" 2>/dev/null || true
     echo "removed the baked WebView and stub (factory Google WebView 149 is back after the next start)"
     exit 0
@@ -99,6 +99,29 @@ install -D -m 644 "$W/lan_wifi_overlay/build/lan-wifi-overlay.apk" "$OV/product/
 # (with WebView 158 single-process made com.anthropic.claude abort: render_process_host_impl.cc InSameStoragePartition).
 install -D -m 755 "$W/unlock-signin" "$OV/system/bin/unlock-signin"
 install -D -m 644 "$W/audioctl_app/build/audioctl.apk" "$OV/system/etc/audioctl.apk"   # tiny audio-service CLI used by gb-firstboot.sh (master-mute fix)
+if [ -f "$W/gb-waydroidplatform.sh" ] && [ -f "$W/waydroid_platform/build/waydroid-platform.jar" ]; then
+    install -D -m 755 "$W/gb-waydroidplatform.sh" "$OV/system/bin/gb-waydroidplatform.sh"
+    install -D -m 644 "$W/waydroid_platform/build/waydroid-platform.jar" "$OV/system/etc/waydroid-platform.jar"
+fi
+if [ -f "$W/gb-surfaceflinger.sh" ]; then
+    install -D -m 755 "$W/gb-surfaceflinger.sh" "$OV/system/bin/gb-surfaceflinger.sh"
+fi
+if [ -f "$W/libgb-sf-waydroid.so" ]; then
+    install -D -m 644 "$W/libgb-sf-waydroid.so" "$OV/system/lib64/libgb-sf-waydroid.so"
+fi
+if [ -f "$W/donor-task/vendor.waydroid.display@1.0.so" ]; then
+    install -D -m 644 "$W/donor-task/vendor.waydroid.display@1.0.so" "$OV/system/lib64/vendor.waydroid.display@1.0.so"
+fi
+if [ -f "$W/donor-task/vendor.waydroid.task@1.0-service" ] && [ -f "$W/patch-waydroid-task.py" ]; then
+    python3 "$W/patch-waydroid-task.py" "$W/donor-task/vendor.waydroid.task@1.0-service" "$OV/system/bin/hw/vendor.waydroid.task@1.0-service"
+    chmod 755 "$OV/system/bin/hw/vendor.waydroid.task@1.0-service"
+fi
+if [ -f "$W/gb-hwcomposer.sh" ]; then
+    install -D -m 755 "$W/gb-hwcomposer.sh" "$OV/system/bin/gb-hwcomposer.sh"
+fi
+if [ -f "$W/libgb-hwc-waydroid.so" ]; then
+    install -D -m 644 "$W/libgb-hwc-waydroid.so" "$OV/vendor/lib64/libgb-hwc-waydroid.so"
+fi
 install -D -m 644 "$W/fix-ui.js" "$OV/system/etc/fix-ui.js"   # sign-in page injection (incl. focused-input paint fix); gb-firstboot copies it to /data if absent
 # Linux Terminal (AVF): the framework only registers VirtualMachineManager when this feature is declared; the stripped vendor image omits it.
 # USB host: without this feature UsbService never creates its UsbHostManager, so Android cannot enumerate or open any USB device
@@ -194,7 +217,7 @@ PYEOF
 install -D -m 755 "$W/input-bridge" "$OV/system/bin/input-bridge"
 # A copy of these in the writable upper layer (overlay_rw) SHADOWS the lower-layer copy installed above, so the container
 # would keep running the old file. Drop stale upper copies so the lower (baked) ones take effect.
-for f in system/system/bin/unlock-signin system/system/bin/gb-firstboot.sh system/system/bin/gb-audiofix.sh system/system/bin/gb-bthal.sh system/system/bin/gb-lan.sh system/system/bin/gb-wifi.sh system/system/bin/gb-fakeap.sh system/system/bin/gb-dhcpd system/system/bin/gb-storagemount.sh system/system/bin/gb-portrelay system/system/bin/gb-portrelay.sh system/system/bin/gb-fridaserver.sh system/system/etc/fakewifi.apk system/system/etc/ethcfg.apk system/system/etc/bthal.apk system/system/etc/fix-ui.js system/system/etc/audioctl.apk system/system/lib64/libselinux.so system/system/lib64/libaudiohal@7.1.so system/system/lib64/libinputflinger.so system/system/bin/input-bridge system/system_ext/etc/init/zzz-googlebook-waydroid.rc system/system/etc/init/udsattestation.rc system/system/etc/init/magisk.rc vendor/vendor/etc/init/android.hardware.cas@1.2-service.rc vendor/vendor/etc/init/android.hardware.media.omx@1.0-service.rc vendor/vendor/etc/init/android.hardware.camera.provider@2.7-external-service.rc vendor/vendor/etc/init/android.hardware.wifi.supplicant-service.rc product/product/etc/permissions/android.hardware.biometrics.face.xml; do
+for f in system/system/bin/unlock-signin system/system/bin/gb-firstboot.sh system/system/bin/gb-audiofix.sh system/system/bin/gb-waydroidplatform.sh system/system/etc/waydroid-platform.jar system/system/bin/gb-surfaceflinger.sh system/system/lib64/libgb-sf-waydroid.so system/system/lib64/vendor.waydroid.display@1.0.so system/system/bin/hw/vendor.waydroid.task@1.0-service system/system/bin/gb-hwcomposer.sh vendor/vendor/lib64/libgb-hwc-waydroid.so system/system/bin/gb-bthal.sh system/system/bin/gb-lan.sh system/system/bin/gb-wifi.sh system/system/bin/gb-fakeap.sh system/system/bin/gb-dhcpd system/system/bin/gb-storagemount.sh system/system/bin/gb-portrelay system/system/bin/gb-portrelay.sh system/system/bin/gb-fridaserver.sh system/system/etc/fakewifi.apk system/system/etc/ethcfg.apk system/system/etc/bthal.apk system/system/etc/fix-ui.js system/system/etc/audioctl.apk system/system/lib64/libselinux.so system/system/lib64/libaudiohal@7.1.so system/system/lib64/libinputflinger.so system/system/bin/input-bridge system/system_ext/etc/init/zzz-googlebook-waydroid.rc system/system/etc/init/udsattestation.rc system/system/etc/init/magisk.rc vendor/vendor/etc/init/android.hardware.cas@1.2-service.rc vendor/vendor/etc/init/android.hardware.media.omx@1.0-service.rc vendor/vendor/etc/init/android.hardware.camera.provider@2.7-external-service.rc vendor/vendor/etc/init/android.hardware.wifi.supplicant-service.rc product/product/etc/permissions/android.hardware.biometrics.face.xml; do
     rm -f "/var/lib/waydroid/overlay_rw/$f"
 done
 rm -rf "$OV/system/etc/init/magisk" "/var/lib/waydroid/overlay_rw/system/system/etc/init/magisk" "$OV/product/etc/permissions/android.hardware.biometrics.face.xml"

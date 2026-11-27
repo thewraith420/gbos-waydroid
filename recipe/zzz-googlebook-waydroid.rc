@@ -89,10 +89,8 @@ on early-init
     mkdir /sys/fs/cgroup/system 0775 system system
     mkdir /sys/fs/cgroup/apps 0775 system system
 
-# Show the full Googlebook UI in one Wayland window without the (missing) waydroidplatform
-# service: single-window mode (read by hwcomposer at start) + active_apps=Waydroid (polled).
-on early-init
-    setprop persist.waydroid.multi_windows false
+# Single-window vs multi-window mode: unset defaults to false (handled by gb-surfaceflinger.sh and
+# hwcomposer), so `waydroid prop set persist.waydroid.multi_windows true` persists across reboots.
 
 # Touchpad two-finger scroll: hwcomposer only emits wheel events when scroll_sensitivity is set (it is
 # empty/off by default), so without this the host's two-finger scroll never reaches Android. Set a
@@ -101,13 +99,40 @@ on early-init
     setprop persist.waydroid.scroll_sensitivity 1.0
     setprop persist.waydroid.reverse_scrolling false
 
-# Force GPU (CLIENT) composition instead of hwcomposer overlays. Waydroid's composer@2.1 SIGSEGVs in the
-# buffer-less-layer path (get_buffer_metadata_cros/create_buffer_cros null deref) during scroll/cursor
-# compositing, rebooting the container. With overlays disabled, SurfaceFlinger composites every layer on
-# the GPU into one framebuffer and never hands those buffer-less layers to hwcomposer -> no crash. Set
-# before surfaceflinger starts so it reads it at init. (The hwcomposer-nullbuf.py binary patch is belt.)
+# Force GPU (CLIENT) composition instead of hwcomposer overlays in single-window mode.
+# When persist.waydroid.multi_windows=true, per-layer HWC overlays are required so hwcomposer
+# creates per-task Wayland windows via IWaydroidDisplay::setLayerName (libgb-sf-waydroid.so).
 on early-init
     setprop debug.sf.disable_hwc_overlays 1
+
+on property:persist.waydroid.multi_windows=true
+    setprop debug.sf.disable_hwc_overlays 0
+    setprop waydroid.blacklist_apps com.google.android.apps.nexuslauncher:com.android.launcher3
+
+on property:persist.waydroid.multi_windows=false
+    setprop debug.sf.disable_hwc_overlays 1
+
+# Wrap surfaceflinger so libgb-sf-waydroid.so is LD_PRELOADed only when multi_windows or sf_layer_names is enabled.
+service surfaceflinger /system/bin/sh /system/bin/gb-surfaceflinger.sh
+    override
+    class core animation
+    user system
+    group graphics drmrpc readproc
+    capabilities SYS_NICE
+    onrestart restart --only-if-running zygote
+    onrestart restart --only-if-running gb-waydroidplatform
+    task_profiles HighPerformance
+
+# Wrap Waydroid's hwcomposer so libgb-hwc-waydroid.so guards create_dmabuf_wl_buffer against invalid/closed
+# dmabuf FDs (which otherwise fail dup() with EBADF in libwayland-client and abort composer@2.1-service).
+service vendor.hwcomposer-2-1 /system/bin/sh /system/bin/gb-hwcomposer.sh --desktop_file_hint=Waydroid.desktop
+    override
+    class hal animation
+    user host
+    group system graphics drmrpc
+    capabilities SYS_NICE
+    onrestart restart surfaceflinger
+    task_profiles ServiceCapacityLow
 
 # Bluetooth can't work in the container (no BT HAL, no wake-alarm timers). Its persistent app enables
 # the adapter and the stack aborts (timerfd, then LE-audio "requires Bluetooth Audio HAL V2", ...),
@@ -150,8 +175,17 @@ service zygote_secondary /system/bin/app_process64 -Xzygote /system/bin --zygote
 on property:init.svc.surfaceflinger=running
     setprop waydroid.active_apps Waydroid
 
+# In hwcomposer.waydroid.so, "none" selects closed_mode (hides all windows), "Waydroid" selects full_ui_mode,
+# and any other value selects multi_window_mode when persist.waydroid.multi_windows=true so the login screen
+# and launched apps open immediately (closing all windows transitions back to "none" until the next launch).
+on property:init.svc.surfaceflinger=running && property:persist.waydroid.multi_windows=true
+    setprop waydroid.active_apps multi
+
 on property:sys.boot_completed=1
     setprop waydroid.active_apps Waydroid
+
+on property:sys.boot_completed=1 && property:persist.waydroid.multi_windows=true
+    setprop waydroid.active_apps multi
 
 # input-bridge: Waydroid's hwcomposer writes host keyboard/mouse/touch as struct input_event streams to
 # /dev/input/wl_*_events, but stock Googlebook EventHub can't read those (not evdev -> ENOTTY -> skipped,
@@ -215,6 +249,17 @@ service gb-audiofix /system/bin/sh /system/bin/gb-audiofix.sh
 
 on property:sys.boot_completed=1
     start gb-audiofix
+
+# gb-waydroidplatform: standalone `waydroidplatform` (`lineageos.waydroid.IPlatform`) + `IUserMonitor` notifier
+# for user 10 so stock host `waydroid` CLI commands and app drawer `.desktop` shortcuts work natively.
+service gb-waydroidplatform /system/bin/sh /system/bin/gb-waydroidplatform.sh
+    class main
+    user root
+    group root system
+    disabled
+
+on property:sys.boot_completed=1
+    start gb-waydroidplatform
 
 # gb-lan: container half of the LAN presence (host daemon gb-lan.py creates an ipvlan NIC eth1 on the host's LAN). Applies the static IP
 # the host chose to Android's Ethernet manager before eth1 exists. Idle (just polls) when the host daemon is not installed.

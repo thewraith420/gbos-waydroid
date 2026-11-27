@@ -10,7 +10,7 @@ CC_AND  := $(TOOLBIN)/x86_64-linux-android34-clang
 OUT     ?= out
 
 HOST_BINS := $(OUT)/unlock-signin $(OUT)/eval-js $(OUT)/gb-dhcpd $(OUT)/gb-portrelay
-NDK_BINS  := $(OUT)/input-bridge $(OUT)/vpd-stub
+NDK_BINS  := $(OUT)/input-bridge $(OUT)/vpd-stub $(OUT)/libgb-sf-waydroid.so $(OUT)/libgb-hwc-waydroid.so
 
 all: $(NDK_BINS) $(HOST_BINS)
 host: $(HOST_BINS)   # no NDK needed
@@ -27,6 +27,12 @@ $(OUT)/input-bridge: input-bridge.c | $(OUT)
 # Verified: byte-identical to the binary the working image uses.
 $(OUT)/vpd-stub: vpd-stub.c | $(OUT)
 	$(CC_AND) -O2 -Wl,--unresolved-symbols=ignore-all -o $@ $< -lbinder_ndk
+
+$(OUT)/libgb-sf-waydroid.so: sf-waydroid-shim.c | $(OUT)
+	$(CC_AND) -shared -fPIC -O2 -Wall -Wextra -Wl,-soname,libgb-sf-waydroid.so -o $@ $< -ldl -llog
+
+$(OUT)/libgb-hwc-waydroid.so: hwc-waydroid-shim.c | $(OUT)
+	$(CC_AND) -shared -fPIC -O2 -Wall -Wextra -Wl,-soname,libgb-hwc-waydroid.so -o $@ $< -ldl -llog
 
 $(OUT)/unlock-signin: unlock-signin.c | $(OUT)
 	gcc -O2 -static -o $@ $<

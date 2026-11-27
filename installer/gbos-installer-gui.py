@@ -54,8 +54,8 @@ STATUS_ICON = {"ok": ("object-select-symbolic", "success"), "warn": ("dialog-war
 
 DEFAULTS = {"downloads": str(HOME / "gbos" / "dl"), "work": str(HOME / "gbos" / "work"),
             "backups": str(HOME / "gbos" / "backups"), "source": "prebuilt", "phone_hub": True, "bluetooth": False,
-            "phone_accessibility": True, "phone_addr": "", "addons": str(HOME / "gbos" / "addons"), "kernel_tree": "",
-            "done": {}}
+            "multi_windows": False, "phone_accessibility": True, "phone_addr": "", "addons": str(HOME / "gbos" / "addons"),
+            "kernel_tree": "", "done": {}}
 
 
 def load_config():
@@ -290,7 +290,7 @@ class Window(Adw.ApplicationWindow):
 
         for build in (self.page_check, self.page_download, self.page_prepare, self.page_backup, self.page_build,
                       self.page_bake, self.page_host, self.page_mainuser, self.page_signin, self.page_phonesetup, self.page_phone,
-                      self.page_doctor):
+                      self.page_window_mode, self.page_doctor):
             self.add_page(build())
 
         self.steps.connect("row-selected", self.on_select)
@@ -1004,6 +1004,150 @@ class Window(Adw.ApplicationWindow):
                 p.log.line("%s is not installed: run the Host services step with Phone Hub on first." % tool, "bad")
                 return
             self.run(p, [Cmd(argv=[str(tool), "status"], ok=tuple(range(256)))], mark=False)
+        p.run_button.connect("clicked", go)
+        return p
+
+    def page_window_mode(self):
+        p = Page(self, "window_mode", "Window mode",
+                 "Choose how GBOS windows appear on your Linux desktop:\n\n"
+                 "<b>Single-window mode (default):</b> Android runs inside one full GBOS desktop window with its own "
+                 "taskbar and desktop layout.\n"
+                 "<b>Multi-window mode:</b> Android apps appear in your Linux application launcher and open as "
+                 "standalone Wayland windows alongside your native Linux apps, each with its own titlebar and close "
+                 "button. You can still open the full GBOS desktop (for Phone Hub or Android settings) any time with "
+                 "<tt>waydroid show-full-ui</tt> and close it when finished.\n\n"
+                 "Switching back and forth never touches your apps or data and needs no re-baking: it sets "
+                 "<tt>persist.waydroid.multi_windows</tt> and restarts Waydroid.",
+                 "Apply and restart Waydroid")
+        g = Adw.PreferencesGroup(title="Display mode")
+        sw = Adw.SwitchRow(
+            title="Multi-window mode",
+            subtitle="Launch Android apps from your host app drawer in standalone Wayland windows "
+                     "(sets persist.waydroid.multi_windows)",
+            active=bool(self.cfg["multi_windows"]),
+        )
+        g.add(sw)
+        p.options.append(g)
+
+        state = Gtk.Label(label="Live status: checking...", xalign=0, wrap=True)
+        state.add_css_class("dim-label")
+        p.options.append(state)
+
+        flags = {"syncing": False, "user_changed": False}
+
+        def on_active(row, _param):
+            if flags["syncing"]:
+                return
+            flags["user_changed"] = True
+            self.cfg["multi_windows"] = row.get_active()
+            save_config(self.cfg)
+
+        sw.connect("notify::active", on_active)
+
+        def refresh(*_a):
+            try:
+                proc = Gio.Subprocess.new(
+                    ["waydroid", "prop", "get", "persist.waydroid.multi_windows"],
+                    Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+                )
+            except GLib.Error:
+                state.set_label("Live status: could not run waydroid to check the current mode.")
+                return
+
+            def done(pr, res):
+                try:
+                    _ok, out, err = pr.communicate_utf8_finish(res)
+                except GLib.Error:
+                    state.set_label("Live status: could not read waydroid status.")
+                    return
+                combined = ((out or "") + "\n" + (err or "")).strip()
+                low = combined.lower()
+                if "session is stopped" in low:
+                    state.set_label("Live status: Waydroid session is stopped. Applying will start it briefly "
+                                    "to save the setting, then restart.")
+                    return
+                if "failed to access iplatform" in low or "failed to access" in low:
+                    state.set_label("Live status: Waydroid is still booting or the overlay is not baked yet.")
+                    return
+                lines = [ln.strip() for ln in (out or combined).splitlines() if ln.strip()]
+                val = lines[-1].lower() if lines else ""
+                live_on = val in ("true", "1")
+                if live_on:
+                    state.set_label("Live status: Multi-window mode is currently ON (persist.waydroid.multi_windows=true).")
+                else:
+                    state.set_label("Live status: Single-window mode is currently ON (persist.waydroid.multi_windows=false).")
+                if not flags["user_changed"]:
+                    flags["syncing"] = True
+                    try:
+                        sw.set_active(live_on)
+                        self.cfg["multi_windows"] = live_on
+                        save_config(self.cfg)
+                    finally:
+                        flags["syncing"] = False
+
+            proc.communicate_utf8_async(None, None, done)
+
+        p.widget.connect("map", refresh)
+
+        skip = Gtk.Button(label="Keep current setting")
+        skip.add_css_class("pill")
+        skip.connect("clicked", lambda _b: (self.mark(p, "skipped"), self.next_step(p)))
+        p.buttons.append(skip)
+
+        apply_script = (
+            'if ! waydroid status 2>/dev/null | grep -Eq \'Session:[[:space:]]*RUNNING\'; then\n'
+            '  echo "Starting Waydroid session to apply property..."\n'
+            '  mkdir -p "$(dirname "$2")"\n'
+            '  setsid -f waydroid session start >"$2" 2>&1 </dev/null\n'
+            '  ready=0\n'
+            '  for i in $(seq 1 30); do\n'
+            '    rel=$(waydroid prop get ro.build.version.release 2>&1 || true)\n'
+            '    last=$(printf \'%s\\n\' "$rel" | tail -n 1 | tr -d \'\\r\\n\')\n'
+            '    if [ -n "$last" ] && ! printf \'%s\' "$rel" | grep -qiE \'session is stopped|failed to access\'; then\n'
+            '      ready=1\n'
+            '      break\n'
+            '    fi\n'
+            '    sleep 1\n'
+            '  done\n'
+            '  if [ "$ready" -ne 1 ]; then\n'
+            '    echo "Timed out waiting for Waydroid IPlatform service (is the overlay baked?)."\n'
+            '    exit 1\n'
+            '  fi\n'
+            'fi\n'
+            'waydroid prop set persist.waydroid.multi_windows "$1"\n'
+            'out=$(waydroid prop get persist.waydroid.multi_windows 2>&1 || true)\n'
+            'got=$(printf \'%s\\n\' "$out" | tail -n 1 | tr -d \'\\r\\n\')\n'
+            'if [ "$got" != "$1" ]; then\n'
+            '  echo "Could not verify persist.waydroid.multi_windows=$1 (got: $out)."\n'
+            '  echo "Waydroid may still be booting or the Bake step has not been run yet."\n'
+            '  exit 1\n'
+            'fi\n'
+            'echo "Saved persist.waydroid.multi_windows=$got. Restarting Waydroid..."\n'
+            'waydroid session stop >/dev/null 2>&1 || true\n'
+            'mkdir -p "$(dirname "$2")"\n'
+            'setsid -f waydroid session start >"$2" 2>&1 </dev/null\n'
+            'echo "Waydroid is restarting with persist.waydroid.multi_windows=$got."\n'
+        )
+
+        def go(_b):
+            enabled = bool(self.cfg["multi_windows"])
+            val = "true" if enabled else "false"
+
+            def after():
+                flags["user_changed"] = False
+                msg = ("Multi-window mode enabled; Waydroid is restarting" if enabled
+                       else "Single-window mode enabled; Waydroid is restarting")
+                self.toast(msg)
+                state.set_label("Live status: Waydroid is restarting with persist.waydroid.multi_windows=%s." % val)
+                GLib.timeout_add_seconds(8, lambda: (refresh(), False)[1])
+
+            self.run(
+                p,
+                [Cmd(script=apply_script, args=[val, str(SESSION_LOG)],
+                     title="waydroid prop set persist.waydroid.multi_windows %s && restart waydroid" % val)],
+                then=after,
+            )
+
         p.run_button.connect("clicked", go)
         return p
 

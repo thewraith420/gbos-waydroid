@@ -42,8 +42,8 @@ HAVE=$(sed -n 's/^Pkg.Revision *= *//p' "$NDK_DIR/source.properties" 2>/dev/null
 
 echo "== 3. build"
 mkdir -p "$OUT/prebuilt"
-make -s -C "$ROOT/native" OUT="$OUT/.build" NDK="$NDK_DIR" "$OUT/.build/input-bridge" "$OUT/.build/vpd-stub" "$OUT/.build/vulkan.hybrid64.so" 2>&1 | grep -v -E 'warning|extern|\^|^ *[0-9]+ \|' || true
-cp "$OUT/.build/input-bridge" "$OUT/.build/vpd-stub" "$OUT/prebuilt/"
+make -s -C "$ROOT/native" OUT="$OUT/.build" NDK="$NDK_DIR" "$OUT/.build/input-bridge" "$OUT/.build/vpd-stub" "$OUT/.build/libgb-sf-waydroid.so" "$OUT/.build/libgb-hwc-waydroid.so" "$OUT/.build/vulkan.hybrid64.so" 2>&1 | grep -v -E 'warning|extern|\^|^ *[0-9]+ \|' || true
+cp "$OUT/.build/input-bridge" "$OUT/.build/vpd-stub" "$OUT/.build/libgb-sf-waydroid.so" "$OUT/.build/libgb-hwc-waydroid.so" "$OUT/prebuilt/"
 if [ -n "$SHIM" ]; then
     [ -f "$SHIM" ] || { echo "no such file: $SHIM" >&2; exit 1; }
     cp "$SHIM" "$OUT/prebuilt/vulkan.hybrid64.so"; SHIMNOTE="the tested binary (linked with host gcc)"
@@ -53,7 +53,7 @@ fi
 rm -r "$OUT/.build"
 
 echo "== 4. checksums"
-( cd "$OUT/prebuilt" && sha256sum input-bridge vpd-stub vulkan.hybrid64.so ) > "$OUT/SHA256SUMS"
+( cd "$OUT/prebuilt" && sha256sum input-bridge vpd-stub libgb-sf-waydroid.so libgb-hwc-waydroid.so vulkan.hybrid64.so ) > "$OUT/SHA256SUMS"
 cat "$OUT/SHA256SUMS"
 if [ "$WRITE" = 1 ]; then
     {
@@ -71,7 +71,7 @@ fi
 echo "== 5. source archive"
 TAR="$OUT/gbos-$VERSION-src.tar.gz"
 ( cd "$ROOT" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='2000-01-01 00:00:00' \
-      --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
+      --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' --exclude='native/out' \
       --transform "s,^\./,gbos-$VERSION/," -cf - . ) | gzip -n -9 > "$TAR"
 ( cd "$OUT" && sha256sum "$(basename "$TAR")" >> SHA256SUMS )
 ls -l "$OUT" "$OUT/prebuilt" | awk '{print $5, $9}' | sed '/^ *$/d'
