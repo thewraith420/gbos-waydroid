@@ -73,6 +73,9 @@ public class Main {
         String allowed = args.length > 2 ? args[2] : null;
 
         if (!setup()) { System.out.println("TOUCH_FAIL no injection entry point"); System.exit(3); }
+        if (allowed != null && !allowed.isEmpty()) {
+            ShellCast.start(allowed);
+        }
 
         ServerSocket srv;
         try {
@@ -170,10 +173,21 @@ public class Main {
             while ((line = in.readLine()) != null) {
                 String[] p = line.trim().split("\\s+");
                 if (p.length < 2 || !token.equals(p[0])) continue;
+                ShellCast.updateHost(s.getInetAddress().getHostAddress());
                 String v = p[1];
                 try {
-                    if (v.equals("ping")) { out.write("pong v6 key fg close scroll\n".getBytes()); out.flush(); }
+                    if (v.equals("ping")) { out.write("pong v7 key fg close scroll cast\n".getBytes()); out.flush(); }
                     else if (v.equals("fg")) { out.write(("fg " + queryForegroundPackage() + "\n").getBytes()); out.flush(); }
+                    else if (v.equals("cast")) {
+                        String sub = p.length >= 3 ? p[2] : "status";
+                        if ("start".equals(sub)) {
+                            ShellCast.start(p.length >= 4 ? p[3] : s.getInetAddress().getHostAddress());
+                        } else if ("stop".equals(sub)) {
+                            ShellCast.stop();
+                        }
+                        out.write((ShellCast.statusLine() + "\n").getBytes());
+                        out.flush();
+                    }
                     else if (v.equals("close") && p.length >= 3) { closePackage(p[2]); out.write("ok\n".getBytes()); out.flush(); }
                     else if (v.equals("D") && p.length >= 5) down(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
                     else if (v.equals("M") && p.length >= 5) move(Integer.parseInt(p[2]), f(p[3]), f(p[4]));

@@ -4,17 +4,22 @@ import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
 /**
  * Quick Settings tile: start or stop casting to the Googlebook.
  *
- * Starting goes through MainActivity's autostart path (the same one the boot receiver uses), because only an
- * activity may ask for the screen-capture consent; with PROJECT_MEDIA allowed that consent is auto-accepted,
- * so a tap is all it takes. Stopping just stops CaptureService, which tears down and restores the volume.
+ * Prefers the ShellCast daemon (gb-touch.jar, no red status-bar timer pill and no notification
+ * hiding) via the host's re-arm control channel, falling back to MainActivity only if the shell
+ * agent is not yet armed on the phone.
  */
 public class CastTileService extends TileService {
+
+    /** Tracks live ShellCast state reported by phone_rearm CAST_STATUS / CAST_START / CAST_STOP. */
+    static volatile boolean SHELL_ACTIVE;
 
     /** Ask Android to re-read both tiles (cast started/stopped, audio link changed, mute toggled). */
     static void refreshTiles(Context c) {
@@ -25,34 +30,61 @@ public class CastTileService extends TileService {
         }
     }
 
-    @Override
-    public void onStartListening() {
+    private void updateTileState(boolean active) {
         Tile t = getQsTile();
         if (t == null) return;
-        boolean on = CaptureService.ACTIVE;
-        t.setState(on ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        t.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         t.setLabel("GBOS Cast");
-        t.setSubtitle(on ? "Casting" : "Off");
+        t.setSubtitle(active ? "Casting" : "Off");
         t.updateTile();
     }
 
     @Override
-    public void onClick() {
-        if (CaptureService.ACTIVE) {
-            stopService(new Intent(this, CaptureService.class));
-            Tile t = getQsTile();
-            if (t != null) {
-                t.setState(Tile.STATE_INACTIVE);
-                t.setSubtitle("Off");
-                t.updateTile();
+    public void onStartListening() {
+        updateTileState(CaptureService.ACTIVE || SHELL_ACTIVE);
+        final String host = CaptureService.host(this);
+        final Handler main = new Handler(Looper.getMainLooper());
+        new Thread(() -> {
+            String rep = MainActivity.askRearm(host, "CAST_STATUS", 1500);
+            if (rep.startsWith("SHELL_CAST")) {
+                boolean on = rep.contains("enabled=true");
+                SHELL_ACTIVE = on;
+                main.post(() -> updateTileState(CaptureService.ACTIVE || on));
             }
+        }).start();
+    }
+
+    @Override
+    public void onClick() {
+        if (CaptureService.ACTIVE || SHELL_ACTIVE) {
+            stopService(new Intent(this, CaptureService.class));
+            SHELL_ACTIVE = false;
+            updateTileState(false);
+            final String host = CaptureService.host(this);
+            new Thread(() -> MainActivity.askRearm(host, "CAST_STOP", 3000)).start();
             return;
         }
-        Intent ui = new Intent(this, MainActivity.class)
-                .putExtra(MainActivity.EXTRA_AUTOSTART, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        PendingIntent pi = PendingIntent.getActivity(this, 2, ui,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        startActivityAndCollapse(pi);
+        final String host = CaptureService.host(this);
+        final Handler main = new Handler(Looper.getMainLooper());
+        new Thread(() -> {
+            String rep = MainActivity.askRearm(host, "CAST_START", 3000);
+            if (rep.startsWith("SHELL_CAST")) {
+                SHELL_ACTIVE = true;
+                AppSync.pushAsync(CastTileService.this);
+                main.post(() -> {
+                    updateTileState(true);
+                    refreshTiles(CastTileService.this);
+                });
+                return;
+            }
+            main.post(() -> {
+                Intent ui = new Intent(CastTileService.this, MainActivity.class)
+                        .putExtra(MainActivity.EXTRA_AUTOSTART, true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                PendingIntent pi = PendingIntent.getActivity(CastTileService.this, 2, ui,
+                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                startActivityAndCollapse(pi);
+            });
+        }).start();
     }
 }

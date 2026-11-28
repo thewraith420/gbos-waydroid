@@ -226,7 +226,7 @@ def ensure_touch_injector(pixel, phone_ip, token, allow_ip):
     """Find a running injector, or (with adb) start/upgrade one without touching the gesture agent."""
     global TOUCH_PORT
     port, caps = phone_rearm.probe_touch_caps(phone_ip, token) if phone_ip else (None, "")
-    if (port is None or "key" not in caps or "fg" not in caps) and pixel and _push_touch_files(pixel):
+    if (port is None or "key" not in caps or "fg" not in caps or "cast" not in caps) and pixel and _push_touch_files(pixel):
         adb(pixel, "push", str(APPDIR / "phone_agent.sh"), "/data/local/tmp/gb-phone-agent.sh")
         r = adb(pixel, "shell", "sh", "/data/local/tmp/gb-phone-agent.sh", "touch", token,
                 allow_ip or "", timeout=60)

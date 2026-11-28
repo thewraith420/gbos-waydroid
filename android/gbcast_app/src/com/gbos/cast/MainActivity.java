@@ -164,7 +164,15 @@ public class MainActivity extends Activity {
         stop.setStateListAnimator(null);
         stop.setOnClickListener(v -> {
             stopService(new Intent(this, CaptureService.class));
-            status.setText("Stopped.");
+            CastTileService.SHELL_ACTIVE = false;
+            CastTileService.refreshTiles(this);
+            status.setText("Stopping \u2026");
+            final String h = hostBox != null && !hostBox.getText().toString().trim().isEmpty()
+                    ? hostBox.getText().toString().trim() : CaptureService.host(this);
+            new Thread(() -> {
+                askRearm(h, "CAST_STOP", 3000);
+                runOnUiThread(() -> status.setText("Stopped."));
+            }).start();
         });
         LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(
                 dp(96), dp(50));
@@ -579,6 +587,24 @@ public class MainActivity extends Activity {
                 .putString("host", host).putInt("port", port).apply();
     }
 
+    /** One line request/response with the laptop's re-arm server (with explicit timeout). */
+    static String askRearm(String host, String msg, int timeoutMs) {
+        if (host == null || host.isEmpty()) return "ERR no-host";
+        Socket s = new Socket();
+        try {
+            s.connect(new InetSocketAddress(host, REARM_PORT), 3000);
+            s.setSoTimeout(timeoutMs);
+            s.getOutputStream().write((msg + "\n").getBytes("UTF-8"));
+            BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+            String line = in.readLine();
+            return line == null ? "ERR no-reply" : line.trim();
+        } catch (IOException e) {
+            return "ERR " + e.getMessage();
+        } finally {
+            try { s.close(); } catch (IOException ignored) { }
+        }
+    }
+
     /** One line request/response with the laptop's re-arm server. */
     private String ask(String host, String msg) throws IOException {
         Socket s = new Socket();
@@ -605,9 +631,23 @@ public class MainActivity extends Activity {
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, 77);
         }
+        final String host = hostBox != null && !hostBox.getText().toString().trim().isEmpty()
+                ? hostBox.getText().toString().trim() : CaptureService.host(this);
         new Thread(() -> {
+            String castRep = askRearm(host, "CAST_STATUS", 2000);
+            boolean shellOn = castRep.startsWith("SHELL_CAST") && castRep.contains("enabled=true");
+            CastTileService.SHELL_ACTIVE = shellOn;
+            CastTileService.refreshTiles(MainActivity.this);
             Integer p = probeLocalAgent();
             runOnUiThread(() -> {
+                if (!autoStarted && !CaptureService.ACTIVE) {
+                    if (shellOn) {
+                        status.setText("Casting via Shell agent (no red pill).\n"
+                                + "Audio routes automatically while a cast window is open.");
+                    } else {
+                        status.setText("Idle. Start casting to mirror without the red pill.");
+                    }
+                }
                 if (p != null) {
                     inputStatus.setText("Touch forwarding: ACTIVE (armed on port " + p + ")");
                 } else if (inputEnabled()) {
@@ -630,10 +670,26 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    private void finishShellCastStart() {
+        CastTileService.SHELL_ACTIVE = true;
+        CastTileService.refreshTiles(this);
+        AppSync.pushAsync(this);
+        status.setText("Casting via Shell agent (no red pill).\n"
+                + "This screen can be locked; audio follows open cast windows.");
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (nm != null) nm.cancel(BootReceiver.NOTIF_ID);
+        if (autoStarted) {
+            autoStarted = false;
+            moveTaskToBack(true);
+        }
+    }
+
     private void begin() {
         final String host = hostBox.getText().toString().trim();
         final int port = parseInt(portBox.getText().toString().trim(), CaptureService.port(this));
         saveTarget(host, port);
+        // Stop any legacy MediaProjection capture first so it never fights ShellCast for :8098.
+        stopService(new Intent(this, CaptureService.class));
         // If what we have does not answer, ask the network before opening the consent dialog:
         // that is what makes "start casting after a reboot" survive the laptop's DHCP lease
         // changing while the phone was asleep.
@@ -644,15 +700,56 @@ public class MainActivity extends Activity {
         status.setText("Checking " + host + ":" + port + " \u2026");
         new Thread(() -> {
             String[] hp = hostAnswers(host, port) ? null : discover();
-            runOnUiThread(() -> {
-                if (hp != null) {
-                    hostBox.setText(hp[0]);
-                    portBox.setText(hp[1]);
-                    saveTarget(hp[0], parseInt(hp[1], CaptureService.port(this)));
-                    status.setText("Found the laptop at " + hp[0] + ":" + hp[1]);
+            final String targetHost = (hp != null) ? hp[0] : host;
+            final String targetPort = (hp != null) ? hp[1] : String.valueOf(port);
+            if (hp != null) {
+                saveTarget(targetHost, parseInt(targetPort, port));
+                runOnUiThread(() -> {
+                    hostBox.setText(targetHost);
+                    portBox.setText(targetPort);
+                    status.setText("Found the laptop at " + targetHost + ":" + targetPort + " \u2026");
+                });
+            }
+
+            String castRep = askRearm(targetHost, "CAST_START", 4000);
+            if (castRep.startsWith("SHELL_CAST")) {
+                runOnUiThread(this::finishShellCastStart);
+                return;
+            }
+
+            if ("NO_SHELL_CAST".equals(castRep)
+                    && checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
+                            == PackageManager.PERMISSION_GRANTED) {
+                boolean weEnabled = false;
+                try {
+                    boolean alreadyOn = Settings.Global.getInt(
+                            getContentResolver(), "adb_wifi_enabled", 0) == 1;
+                    if (!alreadyOn) {
+                        Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 1);
+                        weEnabled = true;
+                        Thread.sleep(1500);
+                    }
+                    String rearmRep = askRearm(targetHost, "REARM", 90000);
+                    if (rearmRep.startsWith("OK") || rearmRep.startsWith("ALREADY_ARMED")) {
+                        String retryCast = askRearm(targetHost, "CAST_START", 4000);
+                        if (retryCast.startsWith("SHELL_CAST")) {
+                            runOnUiThread(this::finishShellCastStart);
+                            return;
+                        }
+                    } else if (weEnabled) {
+                        Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 0);
+                        weEnabled = false;
+                    }
+                } catch (Exception ignored) {
+                    if (weEnabled) {
+                        try {
+                            Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 0);
+                        } catch (Exception ignored2) { }
+                    }
                 }
-                startConsent();
-            });
+            }
+
+            runOnUiThread(this::startConsent);
         }).start();
     }
 

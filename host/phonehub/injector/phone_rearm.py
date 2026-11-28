@@ -333,6 +333,34 @@ def probe_touch_injector(phone_ip, token):
     return probe_touch_caps(phone_ip, token)[0]
 
 
+def _touch_cmd(phone_ip, token, cmd):
+    """Send a control command (e.g. 'cast status') to gb-touch.jar if it supports 'cast'."""
+    port, caps = probe_touch_caps(phone_ip, token)
+    if port is None or "cast" not in caps.split():
+        return None
+    s = None
+    try:
+        s = socket.create_connection((phone_ip, port), timeout=1.5)
+        s.settimeout(2.0)
+        s.sendall(f"{token} {cmd}\n".encode())
+        buf = b""
+        while b"\n" not in buf and len(buf) < 512:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            buf += chunk
+        rep = buf.split(b"\n", 1)[0].decode("utf-8", "replace").strip()
+        return rep or None
+    except OSError:
+        return None
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
 def _host_lan_ip():
     """This laptop's current LAN address (follows whatever network it is on; same trick the session uses)."""
     return gbos_env.lan_ip()
@@ -431,6 +459,16 @@ def handle(args, req):
     """REARM -> find adb, start the agent, report, then switch wireless debugging back off."""
     phone_ip = args.phone
     req_upper = req.strip().upper()
+    if req_upper.startswith("CAST_STATUS"):
+        rep = _touch_cmd(phone_ip, args.token, "cast status")
+        return f"SHELL_CAST {rep}" if rep else "NO_SHELL_CAST"
+    if req_upper.startswith("CAST_START"):
+        lan_ip = _host_lan_ip() or ""
+        rep = _touch_cmd(phone_ip, args.token, f"cast start {lan_ip}".strip())
+        return f"SHELL_CAST {rep}" if rep else "NO_SHELL_CAST"
+    if req_upper.startswith("CAST_STOP"):
+        rep = _touch_cmd(phone_ip, args.token, "cast stop")
+        return f"SHELL_CAST {rep}" if rep else "NO_SHELL_CAST"
     if not (req_upper.startswith("REARM") or req_upper.startswith("STATUS") or req_upper.startswith("PROBE")):
         return "ERR unknown request"
 
@@ -442,7 +480,7 @@ def handle(args, req):
             not req_upper.startswith("STATUS")
             and not req_upper.startswith("PROBE")
             and TOUCH_JAR.exists()
-            and (touch_port is None or "key" not in touch_caps or "fg" not in touch_caps)
+            and (touch_port is None or "key" not in touch_caps or "fg" not in touch_caps or "cast" not in touch_caps)
         )
         if not need_touch_upgrade:
             log(f"agent is ALREADY alive on {phone_ip}:{alive_port}"
