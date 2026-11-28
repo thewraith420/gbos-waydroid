@@ -1,74 +1,97 @@
-# GBOS on Waydroid — v0.1.4-pre
+# GBOS on Waydroid — v0.2.0-pre
 
 Preview release. Run the Android 17 "Googlebook" system image inside Waydroid on an ordinary
-Linux PC, and link it to an Android phone with Phone Hub / App Cast.
+Linux PC, integrate it into your Linux desktop with multi-window mode and the GNOME Shell Phone Hub
+extension, and link it to your Android phone with Phone Hub / App Cast.
 
-**Preview quality.** This release has been run end to end from a clean Waydroid on one machine,
-up to the point of pairing a phone (details below). Expect to read the docs and do some
-troubleshooting. Back up first: `try.sh` resets Waydroid.
+**Preview quality.** Core upgrades in this release were built and exercised on the developer's
+installed laptop + Pixel setup, while a clean install was verified end to end through `gbos-doctor.py`
+in earlier releases. Expect to read the docs and do some troubleshooting. Back up first: `try.sh`
+resets Waydroid.
 
 **Prerequisite:** a working Waydroid install, binder included. GBOS builds on it and does not
 install Waydroid for you.
 
 ## What's in this release
 
-- **Source** (`gbos-0.1.4-pre-src.tar.gz`): the whole repository, which includes the installer,
-  recipe, native helpers, Android app sources, host services, the optional hybrid-GPU mode, the
-  optional kernel add-ons, and the docs.
-- **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `vulkan.hybrid64.so`). `input-bridge`
-  is new in this release (it adds the virtual lid switch, below); the other two are byte-identical to every earlier
-  release. These save the installer from building them. `input-bridge` and `vpd-stub` are
-  reproducible NDK r27c builds. The GPU shim is the exact binary tested on-device. All three
-  match the committed [`prebuilt.sha256`](prebuilt.sha256), and the installer checks every
-  download against it.
+- **Source** (`gbos-0.2.0-pre-src.tar.gz`): the whole repository, which includes the installer,
+  recipe, native helpers, Android app sources, host services, GNOME Shell extension, the optional
+  hybrid-GPU mode, the optional kernel add-ons, and the docs.
+- **Prebuilt Android binaries** (`input-bridge`, `vpd-stub`, `libgb-sf-waydroid.so`,
+  `libgb-hwc-waydroid.so`, `vulkan.hybrid64.so`). `libgb-sf-waydroid.so` and
+  `libgb-hwc-waydroid.so` are new in this release for Waydroid multi-window mode; the other three
+  are unchanged from `v0.1.4-pre`. The four core Android binaries are reproducible NDK r27c builds;
+  the GPU shim is the exact binary tested on-device. All five match the committed
+  [`prebuilt.sha256`](prebuilt.sha256), and the installer checks every download against it.
 
 ```sh
 installer/gbos-install.py fetch-prebuilt \
-  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.4-pre --dest DIR
+  --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.2.0-pre --dest DIR
 ```
 
 If you'd rather not use them, build from source. `prepare --ndk auto` fetches the NDK and
 compares what it builds against the published checksums.
 
-## New since v0.1.3-pre
+## New since v0.1.4-pre
 
-- **Phone Hub connects without a debugger.** Cross-Device Services only searches for the phone when Android thinks the
-  device is open, and under Waydroid it always read as closed, so the link keeper had to attach `jdb` and force that
-  check every time. `input-bridge` now adds a virtual lid switch (`waydroid_lid`) that reports open, so the check passes
-  on its own. On the developer's machine the link has needed no forcing since. The `jdb` route is kept for older images, and a JDK is
-  still needed to build the apps.
-- **New Cross-Device Services versions are handled automatically.** `resolve_cds_names.py` reads the app's code and
-  finds the renamed classes and methods the keeper and App Cast use, caching the result per version
-  (`~/.cache/gbos/cds-names-<version>.json`). It matches every name found by hand for the last two versions, and knows
-  1.0.1392 (2026-11) out of the box. No more waiting for a GBOS update after the app updates itself.
-- **Reconnecting the phone is more reliable.** `phone_rearm.py` finds the phone's wireless debugging port by mDNS before
-  scanning, scans the whole range when it has to, and says so plainly when the phone has stopped trusting this computer
-  (`ERR adb-unpaired`: pair again) instead of retrying forever.
-- **The host no longer treats Waydroid's virtual devices as its own lid and power buttons.** The udev rule is now
-  `65-waydroid-input-ignore.rules` (was `99-`); the old one could not stop `systemd-logind` watching them. `try.sh`
-  installs the new one and removes the old one, and `gbos-doctor.py` flags the old name.
-- `gbos-doctor.py` checks Android's base device state, and `gb-link-daemon.py`'s Cross-Device check is stricter. `TROUBLESHOOTING.md`
-  and `FIX-CATALOG.md` cover the new route.
+- **Waydroid multi-window mode and host app drawer integration.** Open GBOS and App Cast windows
+  directly on the Linux desktop alongside native apps instead of only inside the full-screen GBOS
+  desktop. New native shims (`libgb-sf-waydroid.so`, `libgb-hwc-waydroid.so`), system service glue
+  (`waydroid-platform.jar`), task HAL patching (`patch-waydroid-task.py`), and a toggle in the
+  graphical installer support per-app windows and host desktop integration.
+- **GNOME Shell Phone Hub extension (`host/gnome-extension/gbos-phonehub@thewraith420`).** Adds a
+  top-bar phone status indicator (`gb-link-daemon.py`) with live color state (connected, live cast,
+  amber **Cast Off** when GBOS Cast is disabled on the phone, disconnected), a searchable phone app
+  grid with Recents, and standalone App Cast launches on the active workspace even when the full
+  GBOS window lives on another workspace. Install with `host/install-host.sh gnome-extension`.
+- **Native Android 17 Task Continuity ("Continue On") bridge.** `gb-continuity.jar` in the
+  container and `gb_continuity.py` on the host bridge (`:8095`) watch the phone's foreground app and
+  surface it in GBOS's native taskbar **Continue On** pill; clicking hands off directly into a live
+  App Cast window, and closing the App Cast window closes/backgrounds the phone app to stay in sync.
+- **No-red-pill ShellCast (`gb-touch.jar` `v7` + `GBOS Cast` `v1.4`).** Instead of holding a
+  permanent user-app `MediaProjection` session (which triggered Android's red status-bar timer pill
+  and hid notification contents whenever linked), the privileged `com.android.shell` daemon captures
+  display `0` via `DisplayManager.createVirtualDisplay` at native portrait `720×1600 @ 12 Mbps`
+  High Profile (with automatic H.264 SPS scaling in `feed_live.js`) and streams internal audio via
+  `REMOTE_SUBMIX` only while an App Cast window is open on GBOS — switching sound automatically
+  between the PC speakers and the phone. Both `GBOS Cast` and its Quick Settings tile now control
+  ShellCast cleanly without silently falling back to `MediaProjection`, and long-pressing the Quick
+  Settings tile opens the app (`QS_TILE_PREFERENCES`).
+- **Smoother App Cast input, physical keyboard, scrolling, and cast-off gating.** Added full
+  physical keyboard forwarding (`K`/`KC`), native mouse/trackpad `ACTION_SCROLL` (`S`), sub-pixel
+  `TCP_NODELAY` batched live touch (`D`/`M`/`U`), live freeform App Cast window geometry tracking,
+  and cast-coupled input gating so turning GBOS Cast off disconnects touch forwarding and ignores
+  stale window input until casting resumes.
 
-### Upgrading from v0.1.3-pre
+### Upgrading from v0.1.4-pre
 
 You don't need to reinstall, and don't re-run `try.sh`: it resets Waydroid. Instead:
 
 ```sh
-installer/gbos-install.py fetch-prebuilt --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.1.4-pre --dest DIR
-installer/gbos-install.py prepare --downloads D --work WORK --prebuilt DIR   # same folders and options as your install;
-                                                              # finished steps are skipped, the new files land in WORK
-sudo install -m 644 recipe/65-waydroid-input-ignore.rules /etc/udev/rules.d/
-sudo rm -f /etc/udev/rules.d/99-waydroid-input-ignore.rules
-sudo udevadm control --reload-rules
-host/install-host.sh phonehub                                 # installs and restarts the new keeper and resolver
+installer/gbos-install.py fetch-prebuilt --url https://github.com/thewraith420/gbos-waydroid/releases/download/v0.2.0-pre --dest DIR
+installer/gbos-install.py prepare --downloads D --work WORK --prebuilt DIR --phone-hub
+host/install-host.sh phonehub --work WORK
+host/install-host.sh gnome-extension          # optional, for GNOME Shell
 waydroid session stop && sudo waydroid container stop
-cd WORK && sudo ./bake-apps.sh                                # installs the new input-bridge and gb-firstboot.sh into the image
+cd WORK && sudo ./bake-apps.sh
 ```
 
-Then start Waydroid (`waydroid session start`). `gbos-doctor.py` should report the base device state as OPEN.
+Then start Waydroid (`waydroid session start`), run `host/phonehub/gb-phone-setup.sh` over wireless
+debugging (or USB) to upgrade the phone to `GBOS Cast` `v1.4`, and tap **Re-arm touch forwarding**
+once to refresh `gb-touch.jar` (`v7`). Log out and back in on GNOME Wayland after installing or
+updating the GNOME extension.
 
 ## Earlier releases
+
+### v0.1.4-pre
+
+- **Phone Hub connects without a debugger.** `input-bridge` adds a virtual lid switch (`waydroid_lid`)
+  that reports open so Cross-Device Services finds the phone without `jdb`.
+- **Automatic Cross-Device Services symbol resolution.** `resolve_cds_names.py` discovers obfuscated
+  class/method names per app version (`~/.cache/gbos/cds-names-<version>.json`).
+- **Reliable phone reconnection & input udev rules.** `phone_rearm.py` probes mDNS before scanning
+  and reports `ERR adb-unpaired`; `65-waydroid-input-ignore.rules` stops `systemd-logind` from
+  reacting to Waydroid virtual buttons.
 
 ### v0.1.3-pre
 

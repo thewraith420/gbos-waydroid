@@ -8,7 +8,8 @@ Nothing here uploads anything by itself.
    ```sh
    tools/make-release.sh --out ~/gbos-dist --shim /path/to/the/tested/vulkan.hybrid64.so --write-lock
    ```
-   It re-runs the scrub, builds `input-bridge`, `vpd-stub` and the Vulkan shim with the pinned NDK (r27c, checked by
+   It re-runs the scrub, builds `input-bridge`, `vpd-stub`, `libgb-sf-waydroid.so`, `libgb-hwc-waydroid.so`,
+   and the Vulkan shim with the pinned NDK (r27c, checked by
    revision), copies in the tested shim if you pass one, writes `SHA256SUMS`, builds a deterministic source archive, and
    with `--write-lock` rewrites [`prebuilt.sha256`](../prebuilt.sha256).
 3. **Commit `prebuilt.sha256` with the release**, so a checkout names exactly the assets it expects.

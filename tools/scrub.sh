@@ -18,7 +18,7 @@ while IFS= read -r f; do note "forbidden file: $f"; done < <(
     -o -name '*.pb' -o -name '.env' \) -print | grep -v '^./assets/' )
 # directories that must not exist
 for d in .venv venv backups build; do
-  find . -path ./.git -prune -o -type d -name "$d" -print | while read -r x; do note "forbidden dir: $x"; done
+  while IFS= read -r x; do note "forbidden dir: $x"; done < <(find . -path ./.git -prune -o -type d -name "$d" -print)
 done
 
 # 2) forbidden content (text files only)

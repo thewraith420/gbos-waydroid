@@ -192,37 +192,39 @@ machine (a Pixel Slate with an 8th-gen CPU) has reached the desktop with working
 
 | Area | State |
 |---|---|
-| Boot to the Googlebook desktop in a Wayland window; keyboard, mouse, touch | works |
+| Boot to the Googlebook desktop (fullscreen or Waydroid multi-window); keyboard, mouse, touch | works |
 | Google account sign-in, Play Store installs and updates | works (with the upstream WebView the installer fetches) |
 | Sound out; real Bluetooth (the host adapter is shared; Quick Share works) | works |
 | USB host support | present; actual device passthrough is untested |
 | Hiding the host panel for true fullscreen (used to crash Android) | fix is in the recipe; no verification is recorded |
 | Android sees Wi-Fi (virtual radio named after your real network) and sits on your LAN | works |
 | Linux Terminal (Debian VM through Android's virtualization framework) | VM boots, networking works |
-| Phone Hub: link to a Pixel, notification sync, Do Not Disturb sync, Quick Access to phone files | works |
-| Phone Hub desktop widget: link status and a Reconnect button | works (our own app, installed by `bake-apps.sh`) |
-| Phone Hub **app streaming** (App Cast): phone apps in a window, clicks and typing sent back, phone audio | works through our own relay and decoder; latency is noticeable and bounded by the phone-side encoder |
+| Phone Hub: link to a Pixel, notification sync, Do Not Disturb sync, Task Continuity ("Continue On"), Quick Access to phone files | works |
+| GNOME Shell Phone Hub extension & GBOS desktop widget (`com.gbos.hub`) | works (top-bar status indicator, searchable phone app launcher, standalone App Cast launch) |
+| Phone Hub **app streaming** (App Cast): portrait `720×1600` phone stream in a Wayland window, smooth touch/scroll & physical keyboard forwarding, auto-switching PC/phone audio, no status-bar red pill | works through `ShellCast` (`gb-touch.jar`), `host_relay`, and `feed_live` |
 | First-run setup wizard | only its sign-in step runs (the "Finish Googlebook setup" notification); the rest is disabled on purpose, it needs a Google security-chip service that does not exist here |
 
 Why app streaming takes our own route: the official stream is refused because the phone verifies a hardware
-attestation GBOS cannot provide. Instead a companion app on the phone sends the screen to a relay on your PC, which
-feeds GBOS's own streaming window. See [ARCHITECTURE](docs/ARCHITECTURE.md).
+attestation GBOS cannot provide. Instead the phone-side companion stack pushes H.264 video and internal audio
+(while an App Cast window is open) to relays on your PC, which feed GBOS's own streaming window. See
+[ARCHITECTURE](docs/ARCHITECTURE.md).
 
 ## Not finished
 
 * **A clean install has been run end to end up to pairing the phone** (on the developer's machine, with its old
   Android data set aside): `check` → `prepare` → `try.sh` → `bake-apps.sh` → host services → main user → Google sign-in
-  → `gb-userfixes.sh`, ending with `gbos-doctor.py` at 0 broken. **Pairing a phone and App Cast have not yet been
-  re-tested from a clean install** (they work on the developer's long-running install). The optional GPU mode was not
-  part of the run.
+  → `gb-userfixes.sh`, ending with `gbos-doctor.py` at 0 broken. **Pairing a phone and the latest multi-window / GNOME /
+  ShellCast / Task Continuity updates have not yet been re-tested from a fresh clean install** (they work on the
+  developer's running install). The optional GPU mode was not part of that run.
 * **The graphical installer is new.** Its read-only pages are tested, and every root step runs the same scripts as the
   command line, but no one has clicked through a whole clean install with it yet. If a step fails, its Output pane shows
   the command, so you can run it in a terminal.
-* **The phone setup step (`gb-phone-setup.sh`) is new** and has not yet been run against a phone. It does what was
-  done by hand on the developer's phone (install, grants, notification access), and reads every change back.
+* **The phone setup step (`gb-phone-setup.sh`)** installs GBOS Cast, grants permissions, enables notification access,
+  and reads every change back.
 * Only tested on one machine (a 13th-gen Intel laptop with an NVIDIA hybrid GPU). Reports from other hardware are welcome.
 
-The prebuilt Android binaries (`input-bridge`, `vpd-stub`, the optional GPU shim) are attached to each
+The prebuilt Android binaries (`input-bridge`, `vpd-stub`, `libgb-sf-waydroid.so`, `libgb-hwc-waydroid.so`, and the
+optional GPU shim) are attached to each
 [release](https://github.com/thewraith420/gbos-waydroid/releases) and checked against [`prebuilt.sha256`](prebuilt.sha256)
 on download. If you'd rather not trust them, build them yourself with the Android NDK, which the installer can fetch for you.
 The build is reproducible, so your build should match the published checksums.

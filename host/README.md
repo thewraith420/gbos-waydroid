@@ -12,7 +12,8 @@ Installed by `install-host.sh`; see its header for all options.
 | `phonehub/appcast_up.sh` + `injector/` | user service `gb-appcast` | The App Cast supervisor: waits for the container, frida-server and the link, then attaches the cast session and keeps it attached. |
 | `injector/audio_relay.py` | user service `gb-audio` | Plays the phone's cast audio on this PC (port 8101). |
 | `injector/discover_host.py` | user service `gb-discover` | Lets the phone app find this PC without typing an IP (UDP 8096). |
-| `phonehub/gb-link-daemon.py` | user service `gb-link-daemon` | Backend for the GBOS home-screen widget (reconnect / open cast), port 8092 on the Waydroid bridge. The widget app itself (`com.gbos.hub`) is baked into the system by `recipe/bake-apps.sh`. |
+| `phonehub/gb-link-daemon.py` + `gb_continuity.py` | user service `gb-link-daemon` | Backend for the GBOS home-screen widget, the GNOME Phone Hub extension (port 8092), and Android 17 Task Continuity ("Continue On", bridge port 8095). |
+| `gnome-extension/gbos-phonehub@thewraith420` | GNOME Shell user extension | Top-bar link/cast status indicator, searchable phone app launcher grid, and standalone App Cast launch (`install-host.sh gnome-extension`). |
 | `phonehub/gb-autostop.sh` | user service `gb-autostop` | Finishes a shutdown: stops the Waydroid session when Android powers itself off. |
 | `phonehub/gb-userfixes.sh`, `set-main-user.py` | run by hand, once | First-run provisioning: the settings inside Android's data that Phone Hub needs (see [INSTALL](../docs/INSTALL.md#6-first-boot-the-main-user-then-sign-in)). |
 
@@ -26,6 +27,7 @@ Installed by `install-host.sh`; see its header for all options.
 
 ```sh
 host/install-host.sh phonehub --work WORKDIR                                            # as your user
+host/install-host.sh gnome-extension                                                    # optional: GNOME Shell panel indicator
 sudo host/install-host.sh system lan wifi                                              # root; add `bt` if wanted
 ```
 
@@ -64,7 +66,8 @@ journalctl --user -u gb-hub-link -u gb-appcast -f     # the services' own logs
 | 8101 | host, LAN | cast audio from the phone |
 | 8091 | host, LAN | "re-arm" server the phone app's button talks to |
 | 8096/udp | host, LAN | discovery |
-| 8092 | Waydroid bridge only | widget link daemon |
+| 8092 | Waydroid bridge / host | widget + GNOME extension link daemon |
+| 8095 | Waydroid bridge only | Android 17 Task Continuity (`gb_continuity.py`) |
 
 ## Trust model (read this before exposing the PC on an untrusted network)
 

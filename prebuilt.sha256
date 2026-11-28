@@ -2,4 +2,6 @@
 # Format: sha256  size  name  note
 ab06c3d06b410fef70b157ac3e37814289a613da080fb5b0df1f1a54e4367552  16880  input-bridge  NDK r27c build, reproducible
 3d7ca7d60f28b88971e103f5d338817c1b7cc17fb2920b98cc18945af8f685bd  6712  vpd-stub  NDK r27c build, reproducible
+c60159d3a285ad4d27152fb28e9090ae09a5f3192fa188eb281e3e15845c16b7  16952  libgb-sf-waydroid.so  NDK r27c build, reproducible
+f152bca876c060ac40699fc940c3478d05213766baf582ec031a2019ddaf18c1  19416  libgb-hwc-waydroid.so  NDK r27c build, reproducible
 7c8b9e2fa29d7a505814538965f56ba40dd1e5f6a22ef3d6f03ba5b3cc30d17c  16832  vulkan.hybrid64.so  the tested binary (linked with host gcc)

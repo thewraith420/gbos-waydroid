@@ -1313,7 +1313,7 @@ def main():
     p.add_argument("--work", required=True)
     p.add_argument("--phone-hub", action="store_true", help="also build the Phone Hub apps")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--prebuilt", help="directory with the prebuilt Android binaries (input-bridge, vpd-stub) from `fetch-prebuilt`")
+    g.add_argument("--prebuilt", help="directory with the prebuilt Android binaries (input-bridge, vpd-stub, multi-window shims) from `fetch-prebuilt`")
     g.add_argument("--ndk", help="Android NDK r27c directory, or 'auto' to unpack the one fetched with --with-ndk")
     ad = sub.add_parser("addons", help="build the kernel add-on modules this machine needs (CPU emulation, binder security context, legacy iptables)")
     ad.add_argument("--tree", help="the tree (or linux-headers) the RUNNING kernel was built from (default: /lib/modules/RELEASE/build)")
