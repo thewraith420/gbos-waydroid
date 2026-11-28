@@ -712,6 +712,12 @@ public class MainActivity extends Activity {
             }
 
             String castRep = askRearm(targetHost, "CAST_START", 4000);
+            if (castRep.startsWith("ERR") && autoStarted) {
+                for (int i = 0; i < 2 && castRep.startsWith("ERR"); i++) {
+                    try { Thread.sleep(2000); } catch (InterruptedException ignored) { break; }
+                    castRep = askRearm(targetHost, "CAST_START", 4000);
+                }
+            }
             if (castRep.startsWith("SHELL_CAST")) {
                 runOnUiThread(this::finishShellCastStart);
                 return;
@@ -736,6 +742,7 @@ public class MainActivity extends Activity {
                             runOnUiThread(this::finishShellCastStart);
                             return;
                         }
+                        castRep = retryCast;
                     } else if (weEnabled) {
                         Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 0);
                         weEnabled = false;
@@ -749,7 +756,18 @@ public class MainActivity extends Activity {
                 }
             }
 
-            runOnUiThread(this::startConsent);
+            final String finalRep = castRep;
+            runOnUiThread(() -> {
+                autoStarted = false;
+                CastTileService.SHELL_ACTIVE = false;
+                CastTileService.refreshTiles(MainActivity.this);
+                if (finalRep.startsWith("ERR")) {
+                    status.setText("Laptop not ready yet (" + finalRep
+                            + "). Wait a few seconds for GBOS AppCast to finish starting, then tap Start casting.");
+                } else {
+                    status.setText("Shell cast agent is not armed on this phone. Tap 'Re-arm touch forwarding' below, then Start casting.");
+                }
+            });
         }).start();
     }
 

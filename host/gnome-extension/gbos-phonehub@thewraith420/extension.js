@@ -13,10 +13,10 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const DEFAULT_BRIDGE_IP = '192.168.240.1';
 const DAEMON_PORT = 8092;
-const POLL_SECONDS = 15;
+const POLL_SECONDS = 5;
 const GRID_COLUMNS = 4;
 const MAX_RECENT = 4;
-const DOT_CLASSES = ['gbos-dot-connected', 'gbos-dot-live', 'gbos-dot-offline'];
+const DOT_CLASSES = ['gbos-dot-connected', 'gbos-dot-live', 'gbos-dot-paused', 'gbos-dot-offline'];
 
 const VERTICAL_BOX_PROPS = Clutter.Orientation?.VERTICAL !== undefined
     ? {orientation: Clutter.Orientation.VERTICAL}
@@ -593,11 +593,16 @@ class GbosPhoneHubIndicator extends PanelMenu.Button {
 
             const cds = String(data.cds ?? 'disconnected').toLowerCase();
             const appcast = String(data.appcast ?? 'inactive').toLowerCase();
+            const cast = String(data.cast ?? (appcast === 'off' ? 'off' : 'on')).toLowerCase();
             const rawPhone = String(data.phone ?? '').trim();
             const phoneSuffix = rawPhone && rawPhone !== 'none' ? ` (${rawPhone})` : '';
 
             if (cds === 'connected') {
-                if (appcast === 'live') {
+                if (cast === 'off' || appcast === 'off') {
+                    this._setDotClass('gbos-dot-paused');
+                    this._titleLabel.text = 'Phone \u2022 Cast Off';
+                    this._subLabel.text = 'GBOS Cast is turned off on phone';
+                } else if (appcast === 'live') {
                     this._setDotClass('gbos-dot-live');
                     this._titleLabel.text = 'Phone \u2022 Connected';
                     this._subLabel.text = `AppCast: Live${phoneSuffix}`;

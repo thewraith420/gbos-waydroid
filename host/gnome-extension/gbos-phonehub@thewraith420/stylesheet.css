@@ -16,6 +16,10 @@
     background-color: #3584e4;
 }
 
+.gbos-dot-paused {
+    background-color: #f5c211;
+}
+
 .gbos-dot-offline {
     background-color: #77767b;
 }

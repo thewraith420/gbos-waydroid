@@ -64,10 +64,11 @@ public class CastTileService extends TileService {
             new Thread(() -> MainActivity.askRearm(host, "CAST_STOP", 3000)).start();
             return;
         }
+        stopService(new Intent(this, CaptureService.class));
         final String host = CaptureService.host(this);
         final Handler main = new Handler(Looper.getMainLooper());
         new Thread(() -> {
-            String rep = MainActivity.askRearm(host, "CAST_START", 3000);
+            String rep = MainActivity.askRearm(host, "CAST_START", 3500);
             if (rep.startsWith("SHELL_CAST")) {
                 SHELL_ACTIVE = true;
                 AppSync.pushAsync(CastTileService.this);
@@ -77,13 +78,26 @@ public class CastTileService extends TileService {
                 });
                 return;
             }
+            if ("NO_SHELL_CAST".equals(rep)) {
+                main.post(() -> {
+                    Intent ui = new Intent(CastTileService.this, MainActivity.class)
+                            .putExtra(MainActivity.EXTRA_AUTOSTART, true)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    PendingIntent pi = PendingIntent.getActivity(CastTileService.this, 2, ui,
+                            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                    startActivityAndCollapse(pi);
+                });
+                return;
+            }
             main.post(() -> {
-                Intent ui = new Intent(CastTileService.this, MainActivity.class)
-                        .putExtra(MainActivity.EXTRA_AUTOSTART, true)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                PendingIntent pi = PendingIntent.getActivity(CastTileService.this, 2, ui,
-                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-                startActivityAndCollapse(pi);
+                SHELL_ACTIVE = false;
+                Tile t = getQsTile();
+                if (t != null) {
+                    t.setState(Tile.STATE_INACTIVE);
+                    t.setLabel("GBOS Cast");
+                    t.setSubtitle("Laptop offline");
+                    t.updateTile();
+                }
             });
         }).start();
     }

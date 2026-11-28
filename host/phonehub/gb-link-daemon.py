@@ -26,7 +26,7 @@ _continuity = None
 
 
 def get_status():
-    status = {"cds": "disconnected", "phone": "none", "appcast": "inactive"}
+    status = {"cds": "disconnected", "phone": "none", "appcast": "inactive", "cast": "off"}
     # Check CDS
     try:
         r = subprocess.run(
@@ -54,20 +54,37 @@ def get_status():
     except Exception:
         pass
 
-    # Check AppCast session
+    # Check live phone cast stream marker
+    cast_active = False
     try:
-        sess_log = Path(gbos_env.run_path("gb-appcast-session.log"))
-        if sess_log.exists():
-            lines = sess_log.read_text(errors="ignore").splitlines()[-20:]
-            for line in reversed(lines):
-                if "frame#" in line:
-                    status["appcast"] = "live"
-                    break
-                if "stream ended" in line:
-                    status["appcast"] = "idle"
-                    break
+        cast_file = Path(gbos_env.run_path("gb-appcast-cast-active"))
+        if cast_file.exists():
+            cast_active = True
+            status["cast"] = "on"
+            if status["phone"] == "none":
+                cast_ip = cast_file.read_text().strip()
+                if cast_ip:
+                    status["phone"] = cast_ip
     except Exception:
         pass
+
+    # Check AppCast session (only treat session log as live while phone cast is on)
+    if not cast_active:
+        status["appcast"] = "off"
+    else:
+        try:
+            sess_log = Path(gbos_env.run_path("gb-appcast-session.log"))
+            if sess_log.exists():
+                lines = sess_log.read_text(errors="ignore").splitlines()[-20:]
+                for line in reversed(lines):
+                    if "frame#" in line:
+                        status["appcast"] = "live"
+                        break
+                    if "stream ended" in line:
+                        status["appcast"] = "idle"
+                        break
+        except Exception:
+            pass
 
     return status
 

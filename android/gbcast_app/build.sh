@@ -17,7 +17,7 @@ rm -rf build && mkdir -p build/classes build/dex build/signer build/gen build/re
     --manifest AndroidManifest.xml \
     --java build/gen \
     --min-sdk-version 34 --target-sdk-version 35 \
-    --version-code 4 --version-name 1.3 \
+    --version-code 5 --version-name 1.4 \
     --auto-add-overlay \
     -R build/res.zip
 
