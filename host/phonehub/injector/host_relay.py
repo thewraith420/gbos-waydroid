@@ -18,7 +18,7 @@
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "lib"))
 import gbos_env  # noqa: E402  shared runtime config: private run dir, container/LAN discovery
-import json, os, re, select, socket, struct, subprocess, sys, threading
+import json, os, re, select, signal, socket, struct, subprocess, sys, threading
 
 argv = [a for a in sys.argv[1:]]
 LISTEN = "--listen" in argv
@@ -41,6 +41,28 @@ BR    = argv[2] if len(argv) > 2 else "6000000"
 HOST, PORT = os.environ.get("GB_RELAY_BIND", "127.0.0.1"), 8099
 # Where the accepted phone's LAN address is published (see serve_listen).
 PHONE_STATE = os.environ.get("GB_PHONE_STATE", gbos_env.run_path("gb-appcast-phone-ip"))
+# Marker file present only while the phone's video stream is actively connected.
+CAST_STATE = os.environ.get("GB_CAST_STATE", gbos_env.run_path("gb-appcast-cast-active"))
+
+
+def _set_cast_active(val):
+    try:
+        tmp = CAST_STATE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(str(val))
+        os.replace(tmp, CAST_STATE)
+    except OSError:
+        pass
+
+
+def _clear_cast_active():
+    try:
+        os.unlink(CAST_STATE)
+    except OSError:
+        pass
+
+
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
 def screenrecord():
@@ -177,6 +199,7 @@ def serve_listen(srv):
         os.unlink(PHONE_STATE)
     except OSError:
         pass
+    _clear_cast_active()
     print(f"waiting for the phone to push on 0.0.0.0:{PHONE_PORT}", flush=True)
 
     phone = None
@@ -190,78 +213,84 @@ def serve_listen(srv):
     # rolling window of recent bytes and replay it to the next client.
     pending = bytearray()
     KEEP = 512 * 1024
-    while True:
-        watch = [psrv, srv] + ([phone] if phone else [])
-        r, _, _ = select.select(watch, [], [], 1.0)
+    try:
+        while True:
+            watch = [psrv, srv] + ([phone] if phone else [])
+            r, _, _ = select.select(watch, [], [], 1.0)
 
-        if phone is None and psrv in r:
-            try:
-                phone, paddr = psrv.accept()
-                print(f"phone push connected from {paddr}", flush=True)
-                # The phone dials US, so its LAN address is free here — and it is the only source
-                # that survives a DHCP change or wireless debugging being off. Publish it so the
-                # supervisor (tools/appcast_up.sh) and the Re-arm server can reach the phone again
-                # without anyone typing an IP: gestures are dead until something knows this.
+            if phone is None and psrv in r:
                 try:
-                    tmp = PHONE_STATE + ".tmp"
-                    with open(tmp, "w") as f:
-                        f.write(paddr[0])
-                    os.replace(tmp, PHONE_STATE)
-                except OSError as e:
-                    print(f"could not record the phone address: {e}", flush=True)
-            except OSError:
-                phone = None
-
-        if srv in r:
-            try:
-                new, addr = srv.accept()
-                print("client connected:", addr, flush=True)
-                if conn is not None:
+                    phone, paddr = psrv.accept()
+                    print(f"phone push connected from {paddr}", flush=True)
+                    _set_cast_active(paddr[0])
+                    # The phone dials US, so its LAN address is free here — and it is the only source
+                    # that survives a DHCP change or wireless debugging being off. Publish it so the
+                    # supervisor (tools/appcast_up.sh) and the Re-arm server can reach the phone again
+                    # without anyone typing an IP: gestures are dead until something knows this.
                     try:
-                        conn.close()
-                    except OSError:
-                        pass
-                conn = new
-                total = 0  # blocking sendall: backpressure beats silently dropping frames
-                if pending:
-                    try:
-                        conn.sendall(bytes(pending))
-                    except OSError:
-                        pass
-            except OSError:
-                pass
-
-        if phone in r:
-            try:
-                b = phone.recv(65536)
-            except (BlockingIOError, InterruptedError):
-                b = None
-            except OSError:
-                b = b""
-            if b == b"":
-                # The agent's screenrecord hit its 170 s cap and will reconnect shortly; the
-                # container client keeps its decoder across this, so it is a normal cycle.
-                print("phone push cycle ended — waiting for the next one", flush=True)
-                try:
-                    phone.close()
+                        tmp = PHONE_STATE + ".tmp"
+                        with open(tmp, "w") as f:
+                            f.write(paddr[0])
+                        os.replace(tmp, PHONE_STATE)
+                    except OSError as e:
+                        print(f"could not record the phone address: {e}", flush=True)
                 except OSError:
-                    pass
-                phone = None
-            elif b:
-                pending += b
-                if len(pending) > KEEP:
-                    del pending[:len(pending) - KEEP]
-                if conn is not None:
-                    try:
-                        conn.sendall(b)
-                        total += len(b)
-                    except OSError:
-                        print(f"client disconnected ({total} bytes)", flush=True)
+                    phone = None
+
+            if srv in r:
+                try:
+                    new, addr = srv.accept()
+                    print("client connected:", addr, flush=True)
+                    if conn is not None:
                         try:
                             conn.close()
                         except OSError:
                             pass
-                        conn = None
+                    conn = new
+                    total = 0  # blocking sendall: backpressure beats silently dropping frames
+                    if pending:
+                        try:
+                            conn.sendall(bytes(pending))
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
+
+            if phone in r:
+                try:
+                    b = phone.recv(65536)
+                except (BlockingIOError, InterruptedError):
+                    b = None
+                except OSError:
+                    b = b""
+                if b == b"":
+                    # The agent's screenrecord hit its 170 s cap and will reconnect shortly; the
+                    # container client keeps its decoder across this, so it is a normal cycle.
+                    print("phone push cycle ended — waiting for the next one", flush=True)
+                    _clear_cast_active()
+                    pending.clear()
+                    try:
+                        phone.close()
+                    except OSError:
+                        pass
+                    phone = None
+                elif b:
+                    pending += b
+                    if len(pending) > KEEP:
+                        del pending[:len(pending) - KEEP]
+                    if conn is not None:
+                        try:
+                            conn.sendall(b)
+                            total += len(b)
+                        except OSError:
+                            print(f"client disconnected ({total} bytes)", flush=True)
+                            try:
+                                conn.close()
+                            except OSError:
+                                pass
+                            conn = None
+    finally:
+        _clear_cast_active()
 
 
 def serve_pull(srv):
@@ -271,17 +300,21 @@ def serve_pull(srv):
         alive = True
         while alive:
             p = screenrecord()
+            _set_cast_active(PIXEL)
             print("screenrecord started, pid", p.pid, flush=True)
             total = 0
             fd = p.stdout.fileno()
-            while True:
-                b = os.read(fd, 65536)   # return whatever's available (don't block for a full buffer)
-                if not b:
-                    break
-                try:
-                    conn.sendall(b); total += len(b)
-                except OSError:
-                    alive = False; break
+            try:
+                while True:
+                    b = os.read(fd, 65536)   # return whatever's available (don't block for a full buffer)
+                    if not b:
+                        break
+                    try:
+                        conn.sendall(b); total += len(b)
+                    except OSError:
+                        alive = False; break
+            finally:
+                _clear_cast_active()
             try:
                 p.terminate(); p.wait(timeout=2)
             except Exception:

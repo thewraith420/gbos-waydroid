@@ -17,7 +17,10 @@
 #                         stops working.
 #
 #   python3 input_relay.py <PIXEL_SERIAL> [--phone-tcp IP PORT TOKEN] [--phone-touch IP PORT TOKEN]
-import os, select, socket, subprocess, sys, time
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "lib"))
+import gbos_env  # noqa: E402  shared runtime config: private run dir, container/LAN discovery
+import os, select, socket, subprocess, sys, threading, time
 
 _argv = list(sys.argv[1:])
 PHONE = None
@@ -42,7 +45,12 @@ if not PIXEL:
 HOST = os.environ.get("GB_RELAY_BIND", "0.0.0.0")
 ALLOW = [a for a in os.environ.get("GB_INPUT_ALLOW", "").split(",") if a]
 PORT = 8100
+CAST_STATE = os.environ.get("GB_CAST_STATE", gbos_env.run_path("gb-appcast-cast-active"))
 _psock = None
+
+
+def cast_active():
+    return os.path.exists(CAST_STATE)
 
 
 def _alive(s):
@@ -80,6 +88,7 @@ def phone_send(line):
             time.sleep(0.1)
     print("phone input err:", err, flush=True)
 
+_tlock = threading.Lock()
 _tsock = None
 _tdown_until = 0.0        # after a failed connect, don't stall every finger event retrying
 _tlast_ok = 0.0           # monotonic time of last successful write on _tsock
@@ -92,7 +101,7 @@ _MOD_KEYS = {57, 58, 59, 60, 113, 114, 115, 116, 143}
 _gest = {}                # finger id -> [x0, y0, t0, live_ok] for the tap/swipe fallback
 
 
-def _close_tsock():
+def _close_tsock_locked():
     global _tsock, _tkey_ok, _tscroll_ok, _tlast_ok
     if _tsock is not None:
         try:
@@ -105,16 +114,39 @@ def _close_tsock():
     _tlast_ok = 0.0
 
 
-def _ensure_touch():
-    """Keep one persistent connection to gb-touch.jar, probing capabilities on connect."""
+def _cast_watcher():
+    """Disconnect live touch immediately when casting stops, and clear backoff when it resumes."""
+    global _tdown_until
+    was = cast_active()
+    while True:
+        time.sleep(0.25)
+        now = cast_active()
+        if not now:
+            disconnected = False
+            with _tlock:
+                if _tsock is not None:
+                    _close_tsock_locked()
+                    disconnected = True
+                _gest.clear()
+            if disconnected or was:
+                print("cast stopped — disconnected touch injector", flush=True)
+        elif not was:
+            with _tlock:
+                _tdown_until = 0.0
+            print("cast active — touch forwarding enabled", flush=True)
+        was = now
+
+
+def _ensure_touch_locked():
+    """Keep one persistent connection to gb-touch.jar while cast is active. Caller holds _tlock."""
     global _tsock, _tdown_until, _tkey_ok, _tscroll_ok, _tlast_ok
-    if TOUCH is None or time.time() < _tdown_until:
+    if not cast_active() or TOUCH is None or time.time() < _tdown_until:
         return False
     # Skip per-event select() + MSG_PEEK while actively streaming (< 1 s since last ok write).
     if _tsock is not None:
         if (time.monotonic() - _tlast_ok) < 1.0 or _alive(_tsock):
             return True
-        _close_tsock()
+        _close_tsock_locked()
     for _ in range(2):
         try:
             _tsock = socket.create_connection(TOUCH[:2], timeout=1.0)
@@ -141,29 +173,37 @@ def _ensure_touch():
             )
             return True
         except OSError:
-            _close_tsock()
+            _close_tsock_locked()
     _tdown_until = time.time() + 3.0
     print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
     return False
 
 
+def _ensure_touch():
+    with _tlock:
+        return _ensure_touch_locked()
+
+
 def touch_send_batch(rest_lines):
     """Send one or more validated touch/key lines in a single TCP write."""
     global _tdown_until, _tlast_ok
-    if not rest_lines or not _ensure_touch():
+    if not rest_lines or not cast_active():
         return False
     tok = TOUCH[2]
     data = "".join(f"{tok} {line}\n" for line in rest_lines).encode()
-    for _ in range(2):
-        try:
-            if not _ensure_touch():
-                return False
-            _tsock.sendall(data)
-            _tlast_ok = time.monotonic()
-            return True
-        except OSError:
-            _close_tsock()
-    _tdown_until = time.time() + 3.0
+    with _tlock:
+        if not _ensure_touch_locked():
+            return False
+        for _ in range(2):
+            try:
+                if not _ensure_touch_locked():
+                    return False
+                _tsock.sendall(data)
+                _tlast_ok = time.monotonic()
+                return True
+            except OSError:
+                _close_tsock_locked()
+        _tdown_until = time.time() + 3.0
     print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
     return False
 
@@ -177,6 +217,8 @@ def touch_send(rest):
 def handle_keyev(p):
     """p = ['keyev', 'C'] | ['keyev', action, keyCode, metaState, repeat]."""
     global _tkey_logged, _tkey_fallback_warned
+    if not cast_active():
+        return
     if len(p) >= 2 and p[1] == "C":
         if _tkey_ok:
             touch_send("KC")
@@ -229,10 +271,15 @@ def _scroll_swipe_fallback(sx, sy, vs, hs):
 def handle_touch(p):
     """p = ["touch", verb, ...]. Live path first; if the gesture could not be streamed end to end,
     replay it on release as tap/swipe (the pre-injector behaviour)."""
+    if not cast_active():
+        with _tlock:
+            _gest.clear()
+        return
     verb = p[1] if len(p) > 1 else ""
     if verb == "C":
         touch_send("C")
-        _gest.clear()
+        with _tlock:
+            _gest.clear()
         return
     if verb == "S" and len(p) >= 6:
         try:
@@ -253,10 +300,12 @@ def handle_touch(p):
         return
     ok = touch_send(" ".join(p[1:]))
     if verb == "D":
-        _gest[fid] = [x, y, time.time(), ok]
+        with _tlock:
+            _gest[fid] = [x, y, time.time(), ok]
         print(f"touch D{fid} {int(x)},{int(y)} live={ok}", flush=True)
     elif verb == "U":
-        g = _gest.pop(fid, None)
+        with _tlock:
+            g = _gest.pop(fid, None)
         print(f"touch U{fid} {int(x)},{int(y)} live={ok}", flush=True)
         if g and fid == "0" and not (ok and g[3]):
             x0, y0, t0 = g[0], g[1], g[2]
@@ -275,6 +324,8 @@ def run(args):
         print("input err:", e, flush=True)
 
 def handle(line):
+    if not cast_active():
+        return
     p = line.split()
     if not p: return
     if p[0] == "touch":
@@ -309,9 +360,11 @@ def handle(line):
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind((HOST, PORT)); srv.listen(1)
+threading.Thread(target=_cast_watcher, daemon=True, name="gb-cast-watch").start()
 print(f"input_relay listening {HOST}:{PORT} -> "
       f"{'phone agent ' + str(PHONE[:2]) if PHONE else 'Pixel ' + PIXEL}"
       f"{' + live touch ' + str(TOUCH[:2]) if TOUCH else ''}", flush=True)
+_ignored_logged = False
 while True:
     conn, addr = srv.accept()
     if ALLOW and addr[0] not in ALLOW:
@@ -333,6 +386,17 @@ while True:
             while b"\n" in buf:
                 line_b, buf = buf.split(b"\n", 1)
                 line = line_b.decode("utf-8", "replace").strip()
+                if not cast_active():
+                    touch_batch.clear()
+                    with _tlock:
+                        if _tsock is not None:
+                            _close_tsock_locked()
+                        _gest.clear()
+                    if not _ignored_logged:
+                        print("cast is off — ignoring input until cast resumes", flush=True)
+                        _ignored_logged = True
+                    continue
+                _ignored_logged = False
                 parts = line.split()
                 if (len(parts) >= 5 and parts[0] == "touch" and parts[1] == "M"
                         and TOUCH is not None):

@@ -468,6 +468,10 @@ def handle(args, req):
         return f"SHELL_CAST {rep}" if rep else "NO_SHELL_CAST"
     if req_upper.startswith("CAST_STOP"):
         rep = _touch_cmd(phone_ip, args.token, "cast stop")
+        try:
+            os.unlink(gbos_env.run_path("gb-appcast-cast-active"))
+        except OSError:
+            pass
         return f"SHELL_CAST {rep}" if rep else "NO_SHELL_CAST"
     if not (req_upper.startswith("REARM") or req_upper.startswith("STATUS") or req_upper.startswith("PROBE")):
         return "ERR unknown request"
