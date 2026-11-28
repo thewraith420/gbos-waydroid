@@ -54,7 +54,7 @@ STATUS_ICON = {"ok": ("object-select-symbolic", "success"), "warn": ("dialog-war
 
 DEFAULTS = {"downloads": str(HOME / "gbos" / "dl"), "work": str(HOME / "gbos" / "work"),
             "backups": str(HOME / "gbos" / "backups"), "source": "prebuilt", "phone_hub": True, "bluetooth": False,
-            "multi_windows": False, "phone_accessibility": True, "phone_addr": "", "addons": str(HOME / "gbos" / "addons"),
+            "multi_windows": False, "phone_accessibility": False, "gnome_extension": True, "phone_addr": "", "addons": str(HOME / "gbos" / "addons"),
             "kernel_tree": "", "done": {}}
 
 
@@ -699,10 +699,11 @@ class Window(Adw.ApplicationWindow):
                  "Android build toolchain. Every file is checked against <tt>sources.lock</tt>; a file that does not match "
                  "is deleted. You can stop and start again: downloads resume.",
                  "Download")
-        g = Adw.PreferencesGroup(title="Two small Android programs",
-                                 description="input-bridge and vpd-stub run inside Android. Either is the same bytes: the "
-                                             "NDK build is reproducible and the downloads are checked against "
-                                             "prebuilt.sha256.")
+        g = Adw.PreferencesGroup(title="Small Android programs",
+                                 description="Four small programs run inside Android: input-bridge and vpd-stub, and "
+                                             "libgb-sf-waydroid.so and libgb-hwc-waydroid.so for multi-window mode. "
+                                             "Either way it is the same bytes: the NDK build is reproducible and the "
+                                             "downloads are checked against prebuilt.sha256.")
         pre = Adw.ActionRow(title="Download the prebuilt ones from the release", subtitle="small, recommended")
         ndk = Adw.ActionRow(title="Build them yourself with the Android NDK", subtitle="adds a 660 MB download")
         r1 = Gtk.CheckButton(active=self.cfg["source"] == "prebuilt")
@@ -842,7 +843,16 @@ class Window(Adw.ApplicationWindow):
         g = Adw.PreferencesGroup()
         g.add(switch_row(self, "Share the Bluetooth adapter", "Gives Android the host's Bluetooth (real devices, "
                                                                "and Phone Hub's nearby discovery)", "bluetooth"))
+        gnome = "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+        ext = switch_row(self, "Phone Hub in the GNOME top bar",
+                         "A GNOME Shell extension: shows whether your phone is linked and casting, opens App Cast "
+                         "on the phone's home screen, and launches phone apps in their own App Cast window on the "
+                         "workspace you are on. Needs Phone Hub. On Wayland it appears after you log out and in."
+                         if gnome else "Only for the GNOME desktop, which this session is not running.",
+                         "gnome_extension")
+        g.add(ext)
         p.options.append(g)
+        p.widget.connect("map", lambda *_a: ext.set_sensitive(gnome and bool(self.cfg["phone_hub"])))
 
         def go(_b):
             parts = ["system", "lan", "wifi"] + (["bt"] if self.cfg["bluetooth"] else [])
@@ -852,6 +862,8 @@ class Window(Adw.ApplicationWindow):
                         title="sudo host/install-host.sh %s ; sudo waydroid container restart" % " ".join(parts))]
             if self.cfg["phone_hub"]:
                 cmds.append(Cmd(argv=[str(REPO / "host" / "install-host.sh"), "phonehub", "--work", self.W]))
+                if gnome and self.cfg["gnome_extension"]:
+                    cmds.append(Cmd(argv=[str(REPO / "host" / "install-host.sh"), "gnome-extension"]))
             cmds.append(self.session_start())
             self.run(p, cmds, then=lambda: self.next_step(p))
         p.run_button.connect("clicked", go)
@@ -934,7 +946,10 @@ class Window(Adw.ApplicationWindow):
                  "<b>Set up phone</b> then installs the app (built by Prepare, signed with your own key), grants the "
                  "permissions it needs (changing developer settings for the Re-arm button, recording the phone's "
                  "sound, notifications), allows its notification access so a phone notification tapped on GBOS opens on "
-                 "the phone, optionally turns on its accessibility service for touch control, and opens it. Every "
+                 "the phone, and opens it. Picture, sound and touch all go through the app's agent, which you start "
+                 "with <b>Re-arm</b> in the next step; it needs no screen-recording prompt and shows no red recording "
+                 "pill. Its accessibility service is an older route to the same thing and stays off unless you switch "
+                 "it on below. Every "
                  "change is read back. Nothing else on the phone is touched; uninstalling GBOS Cast undoes all of it. "
                  "<b>Check phone</b> only reports.",
                  "Set up phone")
@@ -947,9 +962,10 @@ class Window(Adw.ApplicationWindow):
         pair_code = Adw.EntryRow(title="First time only: 6-digit pairing code")
         g.add(pair_addr)
         g.add(pair_code)
-        g.add(switch_row(self, "Touch control through accessibility",
-                         "Optional. The app's touch agent does the same job, and Android's Advanced Protection blocks "
-                         "this for apps from outside the Play Store", "phone_accessibility"))
+        g.add(switch_row(self, "Also turn on touch control through accessibility",
+                         "Not needed: the app's agent already handles touch. Only for phones where the agent cannot "
+                         "start. Android's Advanced Protection blocks it for apps from outside the Play Store",
+                         "phone_accessibility"))
         p.options.append(g)
         tool = REPO / "host" / "phonehub" / "gb-phone-setup.sh"
 
@@ -981,12 +997,17 @@ class Window(Adw.ApplicationWindow):
     def page_phone(self):
         p = Page(self, "phone", "Pair your phone",
                  "With the phone set up (previous step), finish at the phone and in GBOS:\n\n"
-                 "1. In <b>GBOS Cast</b> on the phone, press <b>Re-arm touch forwarding</b> once (it starts the touch "
-                 "agent; needed again only after the phone reboots). Wireless debugging can be switched off "
+                 "1. In <b>GBOS Cast</b> on the phone, press <b>Re-arm touch forwarding</b> once (it starts the agent "
+                 "that sends the picture, sound and touch; needed again only after the phone reboots). Wireless "
+                 "debugging can be switched off "
                  "afterwards: Re-arm turns it on by itself for a few seconds when it needs it.\n"
                  "2. On the phone, turn on <b>Cross-device services</b> for the account GBOS is signed in with.\n"
                  "3. In GBOS, open the Cross-device services popup and scan its QR code with the phone.\n"
-                 "4. Start casting from the phone app (it finds your PC on its own), or open App Cast in GBOS.\n"
+                 "4. Start casting from the phone app (it finds your PC on its own), or from its <b>GBOS Cast</b> "
+                 "Quick Settings tile (long-press the tile to open the app). Then open App Cast in GBOS, or a phone "
+                 "app from the GNOME top bar. The phone's sound plays on the PC while an App Cast window is open, "
+                 "and on the phone otherwise. Apps open on the phone also show up in GBOS's taskbar as "
+                 "<b>Continue On</b>.\n"
                  "5. Optional: put the <b>Phone Hub widget</b> on the GBOS desktop (right-click the desktop, Widgets, "
                  "\"Phone Hub\"). It shows whether the link is up and has a Reconnect button.\n\n"
                  "The button below shows the state of the Phone Hub services.",

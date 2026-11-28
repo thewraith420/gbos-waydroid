@@ -217,6 +217,14 @@ BAKED = [
     "system/lib64/libaudiohal@7.1.so", "system/lib64/libinputflinger.so", "system/etc/audioctl.apk",
     "system/bin/gb-wifi.sh", "system/etc/fakewifi.apk", "system/etc/bthal.apk", "product/overlay/GbLanWifiOverlay.apk",
 ]
+# Baked by bake-apps.sh only when Prepare built them (v0.2.0 and later); reported on their own, so an older work folder
+# reads as "re-run Prepare", not as a broken bake.
+BAKED_V02 = {
+    "system/bin/gb-surfaceflinger.sh": "multi-window mode", "system/lib64/libgb-sf-waydroid.so": "multi-window mode",
+    "system/bin/gb-hwcomposer.sh": "multi-window mode", "vendor/lib64/libgb-hwc-waydroid.so": "multi-window mode",
+    "system/bin/gb-waydroidplatform.sh": "multi-window mode", "system/etc/waydroid-platform.jar": "multi-window mode",
+    "system/bin/gb-continuity.sh": "Continue On", "system/etc/gb-continuity.jar": "Continue On",
+}
 
 
 def md5_small(path, limit=64 << 20):
@@ -243,6 +251,13 @@ def check_overlay(a):
         warn("overlay", "%d baked file(s) missing, e.g. %s" % (len(missing), missing[0]), "stop Waydroid, then sudo ./bake-apps.sh")
     else:
         ok("overlay", "all %d baked files are present" % len(BAKED))
+    miss2 = [f for f in BAKED_V02 if not os.path.isfile(os.path.join(lower, f))]
+    if miss2:
+        feats = sorted({BAKED_V02[f] for f in miss2})
+        warn("overlay", "%s not baked (missing %s)" % (" and ".join(feats), ", ".join(os.path.basename(f) for f in miss2)),
+             "re-run Prepare from v0.2.0 or later, then stop Waydroid and sudo ./bake-apps.sh")
+    else:
+        ok("overlay", "multi-window and Continue On files are baked")
     # A copy of a baked file in the writable layer WINS over the baked one: a "fix" that does nothing.
     shadows = []
     for dp, _, fs in os.walk(lower):
@@ -285,6 +300,15 @@ def check_services(a, home):
         st = out.strip() or "unknown"
         (ok if st == "active" else warn)("services", "%s (user): %s" % (u, st), "" if st == "active" else "journalctl --user -u %s" % u)
     run = os.environ.get("GB_RUN") or (os.path.join(os.environ["XDG_RUNTIME_DIR"], "gbos") if os.environ.get("XDG_RUNTIME_DIR") else "")
+    if run and os.path.exists(os.path.join(P(home or "/"), ".config/systemd/user/gb-appcast.service")):
+        cast_active = os.path.exists(os.path.join(run, "gb-appcast-cast-active"))
+        info("services", "phone cast stream: %s" % ("active" if cast_active else "off/idle"))
+    if home:
+        ext_js = os.path.join(P(home), ".local/share/gnome-shell/extensions/gbos-phonehub@thewraith420/extension.js")
+        if os.path.exists(ext_js):
+            ok("services", "GNOME Shell Phone Hub extension: installed")
+        else:
+            info("services", "GNOME Shell Phone Hub extension: not installed")
     lock = os.path.join(run, "gb-appcast.lock") if run else ""
     if lock and os.path.exists(lock):
         rc, out = sh(["pgrep", "-f", "appcast_session.py"])

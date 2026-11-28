@@ -3,13 +3,21 @@
 Run the Android 17 "Googlebook" system image from a Lenovo Googlebook 15 recovery image inside
 [Waydroid](https://waydro.id) on an ordinary Linux PC, and link it to your Android phone with Phone Hub.
 
+* **Android apps on your Linux desktop.** Use the full Googlebook desktop in one window, or switch on multi-window mode
+  and GBOS apps appear in your app drawer and open in their own windows next to your Linux apps.
+* **Your phone on your PC.** Phone Hub links GBOS to your Android phone: notifications, Do Not Disturb, phone files, and
+  **App Cast**, which streams phone apps into a window you control with your mouse and keyboard, with the sound on your
+  PC. **Continue On** picks up the app you have open on the phone.
+* **Phone Hub in the GNOME top bar.** An optional GNOME Shell extension shows the link and opens any phone app in App
+  Cast.
+
 **Unofficial and experimental.** This is a hobby bring-up, developed and tested on one laptop and one phone. It is not
 affiliated with or endorsed by Google, Lenovo or the Waydroid project. "Googlebook", "Android", "Pixel" and
 "Chromium" belong to their owners.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/01-check-dark.png">
-  <img alt="The GBOS installer: a sidebar of twelve steps, with the machine check reporting Ready to install" src="assets/screenshots/01-check-light.png" width="860">
+  <img alt="The GBOS installer: a sidebar of thirteen steps, with the machine check reporting Ready to install" src="assets/screenshots/01-check-light.png" width="860">
 </picture>
 
 ## Before you start
@@ -57,7 +65,7 @@ and installs your kernel's headers first if they are missing:
 
 About 10 GB from the original publishers (Google's recovery image, the Waydroid Android 16 images, an upstream WebView,
 the Android build tools). Every file is checked against its published checksum. You can stop and start again: it
-resumes. Leave the **prebuilt** option on unless you want to build two small helper programs yourself.
+resumes. Leave the **prebuilt** option on unless you want to build the four small Android programs yourself.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/02-download-dark.png">
@@ -108,7 +116,8 @@ slow**; give it several minutes.
 ### 7. Host services
 
 Gives Android Wi-Fi and a presence on your network (Phone Hub needs both) and, with Phone Hub on, installs its services
-on your PC. Switch on **Share the Bluetooth adapter** if you want Android to use your PC's Bluetooth.
+on your PC. Switch on **Share the Bluetooth adapter** if you want Android to use your PC's Bluetooth. On GNOME, leave
+**Phone Hub in the GNOME top bar** on to install the extension (on Wayland it appears after you log out and back in).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/07-host-dark.png">
@@ -139,8 +148,10 @@ In GBOS, sign in with the Google account **you use on your phone**, from the **F
 
 On your Android phone (Android 14 or newer) turn on **Wireless debugging** in Developer options and copy its address and
 port into the page; the first time, also the pairing address and code from *Pair device with pairing code*. **Set up
-phone** installs the companion app GBOS Cast, grants the permissions it needs, allows its notification access, optionally
-turns on touch control, and checks that each change took.
+phone** installs the companion app GBOS Cast, grants the permissions it needs, allows its notification access, and
+checks that each change took. Picture, sound and touch all go through GBOS Cast's agent, so there is no screen-recording
+prompt and no red recording pill on the phone. Leave the accessibility switch off unless the agent cannot start on your
+phone.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/10-phonesetup-dark.png">
@@ -150,22 +161,35 @@ turns on touch control, and checks that each change took.
 ### 11. Pair your phone
 
 In GBOS Cast press **Re-arm touch forwarding** once, turn on Cross-device services on the phone, and scan the QR code
-GBOS shows. The page lists each step. Then put the **Phone Hub widget** on the GBOS desktop to see the link and reconnect
-it in one click.
+GBOS shows. The page lists each step. Then start casting from GBOS Cast or its **Quick Settings tile** (long-press the
+tile to open the app), and open a phone app from App Cast in GBOS or from the GNOME top bar. The phone's sound plays on
+the PC while an App Cast window is open, and on the phone when none is. Put the **Phone Hub widget** on the GBOS desktop
+to see the link and reconnect it in one click.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/11-phone-dark.png">
   <img alt="The pair-your-phone page listing the steps" src="assets/screenshots/11-phone-light.png" width="760">
 </picture>
 
-### 12. Health check
+### 12. Window mode
+
+Choose how GBOS shows up on your desktop. **Single-window** (the default) keeps the whole Googlebook desktop in one
+window. **Multi-window** puts GBOS apps in your Linux app drawer, each opening in its own window; you can still open the
+full desktop any time (`waydroid show-full-ui`). Switching restarts Waydroid and never touches your apps or data.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/12-window-mode-dark.png">
+  <img alt="The window mode page with the multi-window switch" src="assets/screenshots/12-window-mode-light.png" width="760">
+</picture>
+
+### 13. Health check
 
 A read-only check of the whole install. Anything it flags comes with the command that fixes it. Run it whenever
 something seems off. **Start GBOS** opens it.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/12-doctor-dark.png">
-  <img alt="The health check reporting nothing broken" src="assets/screenshots/12-doctor-light.png" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/13-doctor-dark.png">
+  <img alt="The health check reporting nothing broken" src="assets/screenshots/13-doctor-light.png" width="760">
 </picture>
 
 The screenshots are the real installer, showing output from a real install on the developer's machine (home folders
