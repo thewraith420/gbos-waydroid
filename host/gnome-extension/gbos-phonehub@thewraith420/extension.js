@@ -2,6 +2,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
@@ -626,9 +627,36 @@ class GbosPhoneHubIndicator extends PanelMenu.Button {
         });
     }
 
+    _hasOffWorkspaceWaydroidWindow() {
+        try {
+            const activeWs = global.workspace_manager.get_active_workspace();
+            for (const actor of global.get_window_actors()) {
+                const win = actor.meta_window;
+                if (!win || win.window_type !== Meta.WindowType.NORMAL)
+                    continue;
+                const id = `${win.get_wm_class() ?? ''} ${win.get_wm_class_instance() ?? ''} ${win.get_title() ?? ''}`.toLowerCase();
+                if (!id.includes('waydroid'))
+                    continue;
+                const ws = win.get_workspace();
+                if (ws && activeWs && ws !== activeWs)
+                    return true;
+            }
+        } catch (e) {
+            logError(e, 'gbos-phonehub: failed checking off-workspace Waydroid windows');
+        }
+        return false;
+    }
+
+    _sendAmbientLaunch(command, onReply) {
+        const wireCmd = this._hasOffWorkspaceWaydroidWindow()
+            ? `STANDALONE ${command}`
+            : command;
+        this._sendDaemonCommand(wireCmd, onReply);
+    }
+
     _onOpenPhoneHome() {
         this._subLabel.text = 'Opening phone home screen\u2026';
-        this._sendDaemonCommand('OPEN_PHONE_HOME', reply => {
+        this._sendAmbientLaunch('OPEN_PHONE_HOME', reply => {
             if (this._destroyed)
                 return;
             if (!reply) {
@@ -643,7 +671,7 @@ class GbosPhoneHubIndicator extends PanelMenu.Button {
     _onOpenPhoneApp(app) {
         this._recordRecentPkg(app.pkg);
         this._subLabel.text = `Opening ${app.label}\u2026`;
-        this._sendDaemonCommand(`OPEN_APP ${app.pkg}`, reply => {
+        this._sendAmbientLaunch(`OPEN_APP ${app.pkg}`, reply => {
             if (this._destroyed)
                 return;
             if (!reply) {

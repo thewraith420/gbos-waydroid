@@ -81,27 +81,39 @@ def _run_container_shell(shell_cmd):
     return r
 
 
-def _wake_and_start_ambient(am_args):
+def _wake_and_start_ambient(am_args, force_standalone=False):
     # When the full GBOS window is closed (waydroid.active_apps=none), hwcomposer stays in
     # closed_mode and hides all host Wayland windows even if an activity starts. Setting
     # waydroid.active_apps wakes the display/multi-window host surface without disturbing an
-    # already-open full Waydroid desktop.
-    cmd = (
-        'cur=$(getprop waydroid.active_apps); '
-        'if [ -z "$cur" ] || [ "$cur" = "none" ]; then '
-        'setprop waydroid.active_apps com.google.ambient.streaming; '
-        'fi; '
-        + am_args
-    )
+    # already-open full Waydroid desktop. When force_standalone=True (e.g. the user clicked
+    # an app in the GNOME extension while Full UI was open on another workspace), reset
+    # waydroid.active_apps to none first so hwcomposer tears down the old surface and spawns
+    # a fresh App Cast window on the user's current workspace.
+    if force_standalone:
+        cmd = (
+            'setprop waydroid.active_apps none; '
+            'sleep 0.3; '
+            'setprop waydroid.active_apps com.google.ambient.streaming; '
+            + am_args
+        )
+    else:
+        cmd = (
+            'cur=$(getprop waydroid.active_apps); '
+            'if [ -z "$cur" ] || [ "$cur" = "none" ]; then '
+            'setprop waydroid.active_apps com.google.ambient.streaming; '
+            'fi; '
+            + am_args
+        )
     return _run_container_shell(cmd)
 
 
-def _open_app_in_cast(pkg):
+def _open_app_in_cast(pkg, force_standalone=False):
     return _wake_and_start_ambient(
         "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
         ".multidevicesync.appcast.receiver.AppCastActivity"
         " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
-        f" --es packageName {shlex.quote(pkg)} --el sessionId 12345"
+        f" --es packageName {shlex.quote(pkg)} --el sessionId 12345",
+        force_standalone=force_standalone,
     )
 
 
@@ -109,6 +121,10 @@ def handle_client(conn, addr):
     try:
         conn.settimeout(15)
         raw = conn.recv(1024).decode("utf-8", "replace").strip()
+        force_standalone = False
+        if raw.upper().startswith("STANDALONE "):
+            force_standalone = True
+            raw = raw[len("STANDALONE "):].strip()
         parts = raw.split(None, 1)
         verb = parts[0].upper() if parts else ""
         arg = parts[1].strip() if len(parts) > 1 else ""
@@ -136,14 +152,15 @@ def handle_client(conn, addr):
                 "am start --user 10 -f 0x10008000 -n com.google.ambient.streaming/"
                 ".multidevicesync.appcast.receiver.AppCastActivity"
                 " --es deviceId b1c2d3e4-0000-4a4a-b4b4-c5c5c5c5c5c5"
-                " --es packageName gbos.phone.home --el sessionId 12345"
+                " --es packageName gbos.phone.home --el sessionId 12345",
+                force_standalone=force_standalone,
             )
             conn.sendall(b'{"status":"opened"}\n')
         elif verb == "OPEN_APP":
             if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", arg):
                 conn.sendall(b'{"error":"invalid_package"}\n')
             else:
-                _open_app_in_cast(arg)
+                _open_app_in_cast(arg, force_standalone=force_standalone)
                 conn.sendall((json.dumps({"status": "opened", "pkg": arg}) + "\n").encode())
         elif verb == "CONTINUITY_STATUS":
             st = _continuity.status() if _continuity else {"transport": "disabled"}
