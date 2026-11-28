@@ -212,6 +212,117 @@ var SV_W=376, SV_H=835, SV_TOP=45, SV_FOCUSED=true, OUR_RECEIVER_PTR=null, OUR_I
 var PREV_SV_FOCUSED=true, KEYS_DOWN=0, KEY_LOGGED=false, IN_OUR_CONSUME=false;
 var H_SCALE=1376.0/331.2;
 
+// Parse H.264 SPS RBSP width/height so portrait streams (e.g. 720x1600) render unstretched
+// while legacy 1376x736 landscape-letterboxed streams keep working identically.
+function parseSpsDimensions(spsU8){
+  if(!spsU8 || spsU8.length < 5) return null;
+  var off = 0;
+  if(spsU8[0]===0 && spsU8[1]===0 && spsU8[2]===1) off = 3;
+  else if(spsU8[0]===0 && spsU8[1]===0 && spsU8[2]===0 && spsU8[3]===1) off = 4;
+  if(off >= spsU8.length || (spsU8[off] & 0x1f) !== 7) return null;
+  var rbsp = [];
+  for(var i = off + 1; i < spsU8.length; i++){
+    if(i >= off + 3 && spsU8[i] === 0x03 && spsU8[i-1] === 0x00 && spsU8[i-2] === 0x00) continue;
+    rbsp.push(spsU8[i]);
+  }
+  var totalBits = rbsp.length * 8, pos = 0;
+  function readBit(){
+    if(pos >= totalBits){ pos++; return 0; }
+    var b = (rbsp[pos >> 3] >> (7 - (pos & 7))) & 1;
+    pos++;
+    return b;
+  }
+  function readBits(n){ var v = 0; for(var i = 0; i < n; i++) v = (v << 1) | readBit(); return v; }
+  function readUe(){
+    var z = 0;
+    while(pos < totalBits && readBit() === 0) z++;
+    if(z >= 30 || pos > totalBits) return 0;
+    return ((1 << z) - 1) + readBits(z);
+  }
+  function readSe(){ var v = readUe(); return (v & 1) ? ((v + 1) >> 1) : -(v >> 1); }
+
+  var profileIdc = readBits(8);
+  readBits(16); // constraint_set*_flags + reserved_zero_2bits + level_idc
+  readUe();     // seq_parameter_set_id
+
+  var chromaFormatIdc = 1, separateColourPlane = 0;
+  if(profileIdc===100||profileIdc===110||profileIdc===122||profileIdc===244||profileIdc===44||
+     profileIdc===83||profileIdc===86||profileIdc===118||profileIdc===128||profileIdc===138||
+     profileIdc===139||profileIdc===134||profileIdc===135){
+    chromaFormatIdc = readUe();
+    if(chromaFormatIdc === 3) separateColourPlane = readBit();
+    readUe(); // bit_depth_luma_minus8
+    readUe(); // bit_depth_chroma_minus8
+    readBit(); // qpprime_y_zero_transform_bypass_flag
+    if(readBit()){ // seq_scaling_matrix_present_flag
+      var cnt = (chromaFormatIdc !== 3) ? 8 : 12;
+      for(var i = 0; i < cnt; i++){
+        if(readBit()){
+          var sz = (i < 6) ? 16 : 64, last = 8, next = 8;
+          for(var j = 0; j < sz; j++){
+            if(next !== 0) next = (last + readSe() + 256) & 255;
+            last = (next === 0) ? last : next;
+          }
+        }
+      }
+    }
+  }
+  readUe(); // log2_max_frame_num_minus4
+  var pocType = readUe();
+  if(pocType === 0){
+    readUe(); // log2_max_pic_order_cnt_lsb_minus4
+  } else if(pocType === 1){
+    readBit(); readSe(); readSe();
+    var numCycle = readUe();
+    for(var i = 0; i < numCycle && pos <= totalBits; i++) readSe();
+  }
+  readUe(); // max_num_ref_frames
+  readBit(); // gaps_in_frame_num_value_allowed_flag
+  var picWidthInMbsMinus1 = readUe();
+  var picHeightInMapUnitsMinus1 = readUe();
+  var frameMbsOnly = readBit();
+  if(!frameMbsOnly) readBit(); // mb_adaptive_frame_field_flag
+  readBit(); // direct_8x8_inference_flag
+  var frameCropping = readBit();
+  var cropL = 0, cropR = 0, cropT = 0, cropB = 0;
+  if(frameCropping){
+    cropL = readUe(); cropR = readUe(); cropT = readUe(); cropB = readUe();
+  }
+  if(pos > totalBits) return null;
+
+  var w = (picWidthInMbsMinus1 + 1) * 16;
+  var h = (2 - frameMbsOnly) * (picHeightInMapUnitsMinus1 + 1) * 16;
+  var chromaArrayType = separateColourPlane ? 0 : chromaFormatIdc;
+  var cropUnitX = 1, cropUnitY = 2 - frameMbsOnly;
+  if(chromaArrayType !== 0){
+    var subWidthC = (chromaFormatIdc === 1 || chromaFormatIdc === 2) ? 2 : 1;
+    var subHeightC = (chromaFormatIdc === 1) ? 2 : 1;
+    cropUnitX = subWidthC;
+    cropUnitY = subHeightC * (2 - frameMbsOnly);
+  }
+  w -= (cropL + cropR) * cropUnitX;
+  h -= (cropT + cropB) * cropUnitY;
+  if(w < 160 || h < 160 || w > 4096 || h > 4096) return null;
+  return [w, h];
+}
+
+function applyVideoSize(w, h){
+  W = VW = w;
+  H = VH = h;
+  var scale = Math.min(VW / PIXEL_W, VH / PIXEL_H);
+  var cW = PIXEL_W * scale;
+  H_SCALE = (cW > 0) ? (VW / cW) : 1.0;
+  log('LIVE', 'video stream ' + w + 'x' + h + ' -> SurfaceView scaleX=' + H_SCALE.toFixed(3));
+  var svRef = SVREF;
+  if(svRef){
+    try{
+      Java.scheduleOnMainThread(function(){
+        try{ svRef.setScaleX(H_SCALE); }catch(e){}
+      });
+    }catch(e){}
+  }
+}
+
 function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime){
   var svW=SV_W, svH=SV_H;
   var tx0=(winX0 - svW*0.5)/H_SCALE + svW*0.5, ty0=winY0 - SV_TOP;
@@ -711,6 +822,14 @@ function handleNAL(t, nal){
 var NDEC_LIVE=false, ndecInitTried=0;
 function ndecAvailable(){ return FO.ownDecoder && globalThis.GB_NDEC && GB_NDEC.ready; }
 function ndecFeedKey(sps,pps,idr){
+  var dims=parseSpsDimensions(sps);
+  if(dims && (dims[0]!==W || dims[1]!==H)){
+    applyVideoSize(dims[0], dims[1]);
+    if(NDEC_LIVE){
+      try{ GB_NDEC.destroy(); }catch(e){}
+      NDEC_LIVE=false;
+    }
+  }
   if(!NDEC_LIVE){
     if(!GB_NDEC.hasWindow()){ if(fed<3) log('NDEC','keyframe before ANativeWindow ready — waiting'); return; }
     var ok=false;
@@ -964,9 +1083,8 @@ function ensureSurface(recv, cb){
       var sv=SurfaceView.$new(Java.cast(act, Java.use('android.content.Context')));
       try{ sv.setZOrderOnTop(true); }catch(e){}
       try{
-        var hScale = 1376.0 / 331.2;
-        sv.setScaleX(hScale);
-        log('LIVE', 'set SurfaceView horizontal scale to ' + hScale.toFixed(2));
+        sv.setScaleX(H_SCALE);
+        log('LIVE', 'set SurfaceView horizontal scale to ' + H_SCALE.toFixed(2));
       }catch(e){ log('WARN', 'setScaleX: ' + e); }
       var LP=Java.use('android.view.ViewGroup$LayoutParams');
       act.addContentView(sv, LP.$new(-1,-1));

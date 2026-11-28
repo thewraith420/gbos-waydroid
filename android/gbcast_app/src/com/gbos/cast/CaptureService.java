@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.AudioManager;
@@ -22,8 +23,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Surface;
+import android.view.WindowManager;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -67,12 +70,11 @@ public class CaptureService extends Service {
      */
     static final String INPUT_TOKEN = "gbos-cast-v1";
 
-    /** Matches what the existing pipeline already negotiated with the GBOS decoder. */
-    private static final int WIDTH = 1376;
-    private static final int HEIGHT = 736;
-    private static final int DPI = 160;
+    /** Portrait cap matching phone aspect ratio (720x1600 on 1080x2400) for crisp App Cast text. */
+    private static final int MAX_SHORT = 720;
+    private static final int MAX_LONG = 1600;
     private static final int FPS = 30;
-    private static final int BITRATE = 6000000;
+    private static final int BITRATE = 12_000_000;
     private static final int IFRAME_SECONDS = 2;
 
     private volatile boolean running;
@@ -201,26 +203,70 @@ public class CaptureService extends Service {
         return START_NOT_STICKY;
     }
 
+    private int[] computeCaptureSize() {
+        int capW = MAX_SHORT, capH = MAX_LONG, dpi = 280;
+        try {
+            WindowManager wm = getSystemService(WindowManager.class);
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+            if (wm != null && dm != null) {
+                Rect b = wm.getMaximumWindowMetrics().getBounds();
+                int physW = Math.min(b.width(), b.height());
+                int physH = Math.max(b.width(), b.height());
+                if (physW > 0 && physH > 0) {
+                    float scale = Math.min((float) MAX_SHORT / physW, (float) MAX_LONG / physH);
+                    if (scale > 1.0f) scale = 1.0f;
+                    capW = Math.max(16, (Math.round(physW * scale) / 16) * 16);
+                    capH = Math.max(16, (Math.round(physH * scale) / 16) * 16);
+                    dpi = Math.max(160, Math.round(dm.densityDpi * ((float) capW / physW)));
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "computeCaptureSize fallback: " + t.getMessage());
+        }
+        return new int[]{capW, capH, dpi};
+    }
+
+    private MediaFormat buildVideoFormat(int w, int h, boolean highProfile) {
+        MediaFormat fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h);
+        fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT,
+                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE);
+        fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
+        fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_SECONDS);
+        fmt.setInteger(MediaFormat.KEY_BITRATE_MODE,
+                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR);
+        fmt.setInteger(MediaFormat.KEY_PRIORITY, 0);
+        if (highProfile) {
+            fmt.setInteger(MediaFormat.KEY_PROFILE,
+                    MediaCodecInfo.CodecProfileLevel.AVCProfileHigh);
+            fmt.setInteger(MediaFormat.KEY_LEVEL,
+                    MediaCodecInfo.CodecProfileLevel.AVCLevel41);
+        }
+        return fmt;
+    }
+
     private void pump() {
         try {
-            MediaFormat fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC,
-                    WIDTH, HEIGHT);
-            fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE);
-            fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
-            fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_SECONDS);
-            fmt.setInteger(MediaFormat.KEY_BITRATE_MODE,
-                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR);
+            int[] sz = computeCaptureSize();
+            int capW = sz[0], capH = sz[1], dpi = sz[2];
 
             codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            try {
+                codec.configure(buildVideoFormat(capW, capH, true),
+                        null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            } catch (Exception hpErr) {
+                Log.w(TAG, "High profile rejected (" + hpErr.getMessage() + "), retrying default profile");
+                try { codec.release(); } catch (Exception ignored) {}
+                codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+                codec.configure(buildVideoFormat(capW, capH, false),
+                        null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            }
             inputSurface = codec.createInputSurface();
             codec.start();
 
-            display = projection.createVirtualDisplay("gbos-cast", WIDTH, HEIGHT, DPI,
+            display = projection.createVirtualDisplay("gbos-cast", capW, capH, dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, inputSurface, null, null);
-            Log.i(TAG, "virtual display up " + WIDTH + "x" + HEIGHT);
+            Log.i(TAG, "virtual display up " + capW + "x" + capH + " @ " + dpi + "dpi / " + BITRATE + "bps");
 
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             byte[] csd = null;
