@@ -57,6 +57,7 @@ public class Main {
     // Active fingers, in the order they went down (that order IS the MotionEvent pointer index).
     private static final List<float[]> fingers = new ArrayList<float[]>();   // {id, x, y}
     private static long downTime;
+    private static long lastInjectTime;
     private static volatile long lastEventAt;
 
     // Held physical keys mapped keyCode -> {downTimeMs, metaState}.
@@ -171,12 +172,13 @@ public class Main {
                 if (p.length < 2 || !token.equals(p[0])) continue;
                 String v = p[1];
                 try {
-                    if (v.equals("ping")) { out.write("pong v4 key fg close\n".getBytes()); out.flush(); }
+                    if (v.equals("ping")) { out.write("pong v6 key fg close scroll\n".getBytes()); out.flush(); }
                     else if (v.equals("fg")) { out.write(("fg " + queryForegroundPackage() + "\n").getBytes()); out.flush(); }
                     else if (v.equals("close") && p.length >= 3) { closePackage(p[2]); out.write("ok\n".getBytes()); out.flush(); }
                     else if (v.equals("D") && p.length >= 5) down(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
                     else if (v.equals("M") && p.length >= 5) move(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
                     else if (v.equals("U") && p.length >= 5) up(Integer.parseInt(p[2]), f(p[3]), f(p[4]));
+                    else if (v.equals("S") && p.length >= 6) injectScroll(f(p[2]), f(p[3]), f(p[4]), f(p[5]));
                     else if (v.equals("C")) synchronized (fingers) { cancelAll(); }
                     else if (v.equals("K") && p.length >= 5) injectKey(Integer.parseInt(p[2]), Integer.parseInt(p[3]), Integer.parseInt(p[4]), p.length >= 6 ? Integer.parseInt(p[5]) : 0);
                     else if (v.equals("KC")) synchronized (heldKeys) { cancelAllKeys(); }
@@ -250,6 +252,19 @@ public class Main {
         return -1;
     }
 
+    /** Caller holds the fingers lock. Never mutates downTime mid-gesture; keeps eventTime monotonic. */
+    private static long resolveEventTime(boolean isDown) {
+        long now = SystemClock.uptimeMillis();
+        if (isDown) {
+            downTime = now;
+            lastInjectTime = now;
+            return now;
+        }
+        long t = Math.max(lastInjectTime, now);
+        lastInjectTime = t;
+        return t;
+    }
+
     private static void down(int id, float x, float y) {
         synchronized (fingers) {
             lastEventAt = SystemClock.uptimeMillis();
@@ -258,9 +273,15 @@ public class Main {
             fingers.add(new float[]{id, x, y});
             int idx = fingers.size() - 1;
             int action;
-            if (idx == 0) { downTime = lastEventAt; action = MotionEvent.ACTION_DOWN; }
-            else action = MotionEvent.ACTION_POINTER_DOWN | (idx << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
-            send(action);
+            long evT;
+            if (idx == 0) {
+                evT = resolveEventTime(true);
+                action = MotionEvent.ACTION_DOWN;
+            } else {
+                evT = resolveEventTime(false);
+                action = MotionEvent.ACTION_POINTER_DOWN | (idx << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
+            }
+            send(action, evT);
         }
     }
 
@@ -272,21 +293,29 @@ public class Main {
             float[] fg = fingers.get(i);
             if (fg[1] == x && fg[2] == y) return;
             fg[1] = x; fg[2] = y;
-            send(MotionEvent.ACTION_MOVE);
+            send(MotionEvent.ACTION_MOVE, resolveEventTime(false));
         }
     }
 
     private static void up(int id, float x, float y) {
         synchronized (fingers) {
-            lastEventAt = SystemClock.uptimeMillis();
+            long now = SystemClock.uptimeMillis();
+            lastEventAt = now;
             int i = indexOf(id);
             if (i < 0) return;
             float[] fg = fingers.get(i);
+            boolean moved = (fg[1] != x || fg[2] != y);
+            if (moved && now > lastInjectTime) {
+                fg[1] = x; fg[2] = y;
+                lastInjectTime = now;
+                send(MotionEvent.ACTION_MOVE, now);
+            }
             fg[1] = x; fg[2] = y;
+            long evT = resolveEventTime(false);
             int action = (fingers.size() == 1)
                 ? MotionEvent.ACTION_UP
                 : (MotionEvent.ACTION_POINTER_UP | (i << MotionEvent.ACTION_POINTER_INDEX_SHIFT));
-            send(action);
+            send(action, evT);
             fingers.remove(i);
         }
     }
@@ -294,12 +323,40 @@ public class Main {
     /** Caller holds the fingers lock. */
     private static void cancelAll() {
         if (fingers.isEmpty()) return;
-        send(MotionEvent.ACTION_CANCEL);
+        send(MotionEvent.ACTION_CANCEL, resolveEventTime(false));
         fingers.clear();
     }
 
+    private static void injectScroll(float x, float y, float vs, float hs) {
+        long now = SystemClock.uptimeMillis();
+        PointerProperties[] props = new PointerProperties[1];
+        PointerProperties pp = new PointerProperties();
+        pp.id = 0;
+        pp.toolType = MotionEvent.TOOL_TYPE_MOUSE;
+        props[0] = pp;
+        PointerCoords[] coords = new PointerCoords[1];
+        PointerCoords pc = new PointerCoords();
+        pc.x = x;
+        pc.y = y;
+        pc.pressure = 0f;
+        pc.size = 0f;
+        pc.setAxisValue(MotionEvent.AXIS_VSCROLL, vs);
+        pc.setAxisValue(MotionEvent.AXIS_HSCROLL, hs);
+        coords[0] = pc;
+        MotionEvent ev = MotionEvent.obtain(now, now, MotionEvent.ACTION_SCROLL, 1, props, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0);
+        try {
+            inject.invoke(inputManager, ev, 0 /* INJECT_INPUT_EVENT_MODE_ASYNC */);
+            injected++;
+        } catch (Throwable t) {
+            System.out.println("scroll inject failed: " + t);
+        } finally {
+            ev.recycle();
+        }
+    }
+
     /** Caller holds the fingers lock. Builds one MotionEvent holding every active finger. */
-    private static void send(int action) {
+    private static void send(int action, long eventTime) {
         int n = fingers.size();
         PointerProperties[] props = new PointerProperties[n];
         PointerCoords[] coords = new PointerCoords[n];
@@ -314,8 +371,7 @@ public class Main {
             pc.pressure = 1f; pc.size = 1f;
             coords[i] = pc;
         }
-        long now = SystemClock.uptimeMillis();
-        MotionEvent ev = MotionEvent.obtain(downTime, now, action, n, props, coords,
+        MotionEvent ev = MotionEvent.obtain(downTime, eventTime, action, n, props, coords,
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
         try {
             inject.invoke(inputManager, ev, 0 /* INJECT_INPUT_EVENT_MODE_ASYNC */);

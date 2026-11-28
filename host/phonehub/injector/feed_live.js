@@ -74,6 +74,7 @@ Java.perform(function(){
 // ---- native non-blocking socket ----
 var socketf=new NativeFunction(gx('socket'),'int',['int','int','int']);
 var connectf=new NativeFunction(gx('connect'),'int',['int','pointer','int']);
+var setsockoptf=new NativeFunction(gx('setsockopt'),'int',['int','int','int','pointer','int']);
 var recvf=new NativeFunction(gx('recv'),'long',['int','pointer','long','int']);
 // errno separates "no data yet" (EAGAIN) from a dead socket, which recv reports identically as -1.
 var errnoPtr=null;
@@ -117,6 +118,11 @@ function connectInput(){
     INPUT_FD=socketf(2,1,0);
     if(INPUT_FD<0){ log('WARN','input socket() failed'); return false; }
     if(connectf(INPUT_FD,sockaddr(hosts[i],INPUT_PORT),16)>=0){
+      try{
+        var nodelay=Memory.alloc(4);
+        nodelay.writeS32(1);
+        setsockoptf(INPUT_FD,6,1,nodelay,4);
+      }catch(e){}
       log('LIVE','input channel connected to '+hosts[i]+':'+INPUT_PORT); return true;
     }
     closef(INPUT_FD); INPUT_FD=-1;
@@ -167,6 +173,13 @@ function mapToPixelRaw(tx,ty,svW,svH){
   var py = Math.round((fy-top)/cH*PIXEL_H);
   return [px, py];
 }
+function mapToPixelFloat(tx,ty,svW,svH){
+  if(svW<=0||svH<=0) return [PIXEL_W*0.5, PIXEL_H*0.5];
+  var scale=Math.min(VW/PIXEL_W, VH/PIXEL_H);
+  var cW=PIXEL_W*scale, cH=PIXEL_H*scale, left=(VW-cW)/2, top=(VH-cH)/2;
+  var fx=tx/svW*VW, fy=ty/svH*VH;
+  return [(fx-left)/cW*PIXEL_W, (fy-top)/cH*PIXEL_H];
+}
 // NO JAVA VIEW HOOKS. Hooking SurfaceView.dispatchTouchEvent / dispatchGenericMotionEvent actually
 // hooks android.view.View (since SurfaceView does not override them), firing 500+ times/sec on
 // mouse hover (ACTION_HOVER_MOVE) across every View in the hierarchy and calling
@@ -199,12 +212,16 @@ var DOWN_P_RAW=null, DOWN_IN_PHONE=false, DOWN_T=0, RAW_DOWN_X=0, RAW_DOWN_Y=0, 
 // Gestures that START in the phone's real system-gesture strips (status bar, nav bar, back edges) are NOT
 // streamed: they keep the release-time Back / Home / Recents / notification-pulldown mapping below.
 // FEED_OPTS {noLiveTouch:1} turns the whole thing off.
-var LIVE_ON=false, LIVE_NPTR=0, LIVE_LAST_T=0;
+var LIVE_ON=false, LIVE_NPTR=0, LIVE_LAST_T=0, LIVE_LAST_X=-1, LIVE_LAST_Y=-1;
 function liveXY(tx,ty,svW,svH){
-  var p=mapToPixelRaw(tx,ty,svW,svH);
-  return [Math.max(0,Math.min(PIXEL_W-1,p[0])), Math.max(0,Math.min(PIXEL_H-1,p[1]))];
+  var p=mapToPixelFloat(tx,ty,svW,svH);
+  var px=Math.max(0,Math.min(PIXEL_W-1,p[0]));
+  var py=Math.max(0,Math.min(PIXEL_H-1,p[1]));
+  return [+px.toFixed(1), +py.toFixed(1)];
 }
-function liveSend(verb,id,xy){ sendLine('touch '+verb+' '+id+' '+xy[0]+' '+xy[1]+'\n'); }
+function liveSend(verb,id,xy,dtMs){
+  sendLine('touch '+verb+' '+id+' '+xy[0]+' '+xy[1]+(dtMs!==undefined?(' '+dtMs):'')+'\n');
+}
 function inSystemStrip(px,py){ return px<=90 || px>=PIXEL_W-90 || py<=100 || py>=PIXEL_H-110; }
 var lastScrollT=0, SCROLL_DEBOUNCE=180, BASE_SCROLL_DIST=550;
 var SV_HOOKED=false, INPUT_LISTENERS=[];
@@ -340,14 +357,20 @@ function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime)
     IS_MULTI = false;
     LIVE_ON = false; LIVE_NPTR = 0;
     if(!FO.noLiveTouch && DOWN_IN_PHONE && !inSystemStrip(DOWN_P_RAW[0], DOWN_P_RAW[1])){
+      var xy0 = liveXY(tx0, ty0, svW, svH);
       LIVE_ON = true; LIVE_NPTR = 1; LIVE_LAST_T = evTime;
-      liveSend('D', 0, liveXY(tx0, ty0, svW, svH));
+      LIVE_LAST_X = xy0[0]; LIVE_LAST_Y = xy0[1];
+      liveSend('D', 0, xy0, 0);
     }
   } else if(action===2){     // MOVE — only ever delivered here while a live gesture is active
-    if(LIVE_ON && evTime - LIVE_LAST_T >= 7){          // <= ~140 updates/s; UP carries the final position
+    if(LIVE_ON && evTime - LIVE_LAST_T >= 4){          // preserve 144 Hz (7 ms) moves without aliasing
+      var xyM0 = liveXY(tx0, ty0, svW, svH);
+      if(LIVE_NPTR < 2 && xyM0[0] === LIVE_LAST_X && xyM0[1] === LIVE_LAST_Y) return;
+      var dtM = Math.max(0, Math.round(evTime - DOWN_T));
       LIVE_LAST_T = evTime;
-      liveSend('M', 0, liveXY(tx0, ty0, svW, svH));
-      if(LIVE_NPTR >= 2) liveSend('M', 1, liveXY(tx1, ty1, svW, svH));
+      LIVE_LAST_X = xyM0[0]; LIVE_LAST_Y = xyM0[1];
+      liveSend('M', 0, xyM0, dtM);
+      if(LIVE_NPTR >= 2) liveSend('M', 1, liveXY(tx1, ty1, svW, svH), dtM);
     }
   } else if(action===3){     // CANCEL
     if(LIVE_ON){ sendLine('touch C\n'); LIVE_ON=false; LIVE_NPTR=0; }
@@ -356,7 +379,10 @@ function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime)
     if(LIVE_ON){
       LIVE_NPTR++;
       IS_MULTI = true;
-      if(LIVE_NPTR === 2 && ptrCount>=2) liveSend('D', 1, liveXY(tx1, ty1, svW, svH));   // 3rd+ fingers ignored
+      if(LIVE_NPTR === 2 && ptrCount>=2){
+        var dtPd = Math.max(0, Math.round(evTime - DOWN_T));
+        liveSend('D', 1, liveXY(tx1, ty1, svW, svH), dtPd);   // 3rd+ fingers ignored
+      }
       return;
     }
     IS_MULTI = true;
@@ -370,13 +396,14 @@ function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime)
     DOWN_T = evTime;
   } else if(action===6 || action===1){     // POINTER_UP (6) or UP (1)
     if(LIVE_ON){
+      var dtUp = Math.max(0, Math.round(evTime - DOWN_T));
       if(action===6){
-        if(LIVE_NPTR === 2) liveSend('U', 1, liveXY(tx1, ty1, svW, svH));
+        if(LIVE_NPTR === 2) liveSend('U', 1, liveXY(tx1, ty1, svW, svH), dtUp);
         if(LIVE_NPTR > 0) LIVE_NPTR--;
         return;
       }
-      if(LIVE_NPTR >= 2) liveSend('U', 1, liveXY(tx1, ty1, svW, svH));   // safety: never leave finger 1 down
-      liveSend('U', 0, liveXY(tx0, ty0, svW, svH));
+      if(LIVE_NPTR >= 2) liveSend('U', 1, liveXY(tx1, ty1, svW, svH), dtUp);   // safety: never leave finger 1 down
+      liveSend('U', 0, liveXY(tx0, ty0, svW, svH), dtUp);
       LIVE_ON = false; LIVE_NPTR = 0; IS_MULTI = false; DOWN_P_RAW = null;
       return;
     }
@@ -470,34 +497,9 @@ function handleNativeTouch(action, ptrCount, winX0, winY0, winX1, winY1, evTime)
 // trackpad two-finger swipes / mouse wheel arrive as ACTION_SCROLL (8) events.
 function handleNativeScroll(winX, winY, vs, hs){
   if(vs===0 && hs===0) return;
-  var now=Date.now();
-  if(now-lastScrollT<SCROLL_DEBOUNCE) return;
-
   var tx=(winX - SV_W*0.5)/H_SCALE + SV_W*0.5, ty=winY - SV_TOP;
-  var p=mapToPixel(tx, ty, SV_W, SV_H);
-  var sx = p ? p[0] : Math.round(PIXEL_W/2);
-  var sy = p ? p[1] : Math.round(PIXEL_H/2);
-
-  sx = Math.max(250, Math.min(PIXEL_W-250, sx));
-  sy = Math.max(450, Math.min(PIXEL_H-450, sy));
-
-  if(Math.abs(vs)>=Math.abs(hs)){
-    var dist = Math.min(850, Math.max(350, Math.round(BASE_SCROLL_DIST * Math.abs(vs))));
-    var ey = vs>0 ? (sy - dist) : (sy + dist);
-    ey = Math.max(250, Math.min(PIXEL_H-250, ey));
-    sendLine('swipe '+sx+' '+sy+' '+sx+' '+ey+' 120\n');
-    log('TOUCH','scroll vs='+vs+' -> vertical swipe ('+sx+','+sy+')->('+sx+','+ey+') 120ms');
-  } else {
-    var hsy = Math.max(600, Math.min(1800, sy));
-    if(hs < 0){
-      sendLine('swipe 880 '+hsy+' 180 '+hsy+' 140\n');
-      log('TOUCH','scroll hs='+hs+' -> page left (880->180) 140ms');
-    } else {
-      sendLine('swipe 180 '+hsy+' 880 '+hsy+' 140\n');
-      log('TOUCH','scroll hs='+hs+' -> page right (180->880) 140ms');
-    }
-  }
-  lastScrollT = now;
+  var xy=liveXY(tx, ty, SV_W, SV_H);
+  sendLine('touch S '+xy[0]+' '+xy[1]+' '+vs.toFixed(3)+' '+hs.toFixed(3)+'\n');
 }
 
 function findExportSub(modName, exact, sub){

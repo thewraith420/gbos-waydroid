@@ -82,15 +82,18 @@ def phone_send(line):
 
 _tsock = None
 _tdown_until = 0.0        # after a failed connect, don't stall every finger event retrying
+_tlast_ok = 0.0           # monotonic time of last successful write on _tsock
 _tkey_ok = False          # True once ping handshake confirms "key" verb support in gb-touch.jar
+_tscroll_ok = False       # True once ping handshake confirms "scroll" verb support in gb-touch.jar
 _tkey_logged = False
 _tkey_fallback_warned = False
+_last_scroll_fallback = 0.0
 _MOD_KEYS = {57, 58, 59, 60, 113, 114, 115, 116, 143}
 _gest = {}                # finger id -> [x0, y0, t0, live_ok] for the tap/swipe fallback
 
 
 def _close_tsock():
-    global _tsock, _tkey_ok
+    global _tsock, _tkey_ok, _tscroll_ok, _tlast_ok
     if _tsock is not None:
         try:
             _tsock.close()
@@ -98,17 +101,18 @@ def _close_tsock():
             pass
         _tsock = None
     _tkey_ok = False
+    _tscroll_ok = False
+    _tlast_ok = 0.0
 
 
 def _ensure_touch():
     """Keep one persistent connection to gb-touch.jar, probing capabilities on connect."""
-    global _tsock, _tdown_until, _tkey_ok
+    global _tsock, _tdown_until, _tkey_ok, _tscroll_ok, _tlast_ok
     if TOUCH is None or time.time() < _tdown_until:
         return False
-    # The injector never writes unprompted, so "readable" can only mean the peer closed. A send to a
-    # closed connection succeeds once before the reset arrives, which would swallow the gesture.
+    # Skip per-event select() + MSG_PEEK while actively streaming (< 1 s since last ok write).
     if _tsock is not None:
-        if _alive(_tsock):
+        if (time.monotonic() - _tlast_ok) < 1.0 or _alive(_tsock):
             return True
         _close_tsock()
     for _ in range(2):
@@ -128,7 +132,34 @@ def _ensure_touch():
                 pass
             _tsock.settimeout(1.0)
             _tkey_ok = (b"key" in reply)
-            print(f"touch injector connected (keys={'yes' if _tkey_ok else 'no'})", flush=True)
+            _tscroll_ok = (b"scroll" in reply)
+            _tlast_ok = time.monotonic()
+            print(
+                f"touch injector connected (keys={'yes' if _tkey_ok else 'no'} "
+                f"scroll={'yes' if _tscroll_ok else 'no'})",
+                flush=True,
+            )
+            return True
+        except OSError:
+            _close_tsock()
+    _tdown_until = time.time() + 3.0
+    print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
+    return False
+
+
+def touch_send_batch(rest_lines):
+    """Send one or more validated touch/key lines in a single TCP write."""
+    global _tdown_until, _tlast_ok
+    if not rest_lines or not _ensure_touch():
+        return False
+    tok = TOUCH[2]
+    data = "".join(f"{tok} {line}\n" for line in rest_lines).encode()
+    for _ in range(2):
+        try:
+            if not _ensure_touch():
+                return False
+            _tsock.sendall(data)
+            _tlast_ok = time.monotonic()
             return True
         except OSError:
             _close_tsock()
@@ -140,21 +171,7 @@ def _ensure_touch():
 def touch_send(rest):
     """Send one live-touch/key line to the injector. Persistent connection, TCP_NODELAY, no per-event
     connect. Returns False if it could not be delivered (caller falls back)."""
-    global _tdown_until
-    if not _ensure_touch():
-        return False
-    data = (TOUCH[2] + " " + rest + "\n").encode()
-    for _ in range(2):
-        try:
-            if not _ensure_touch():
-                return False
-            _tsock.sendall(data)
-            return True
-        except OSError:
-            _close_tsock()
-    _tdown_until = time.time() + 3.0
-    print("touch injector unreachable — falling back to tap/swipe for 3 s", flush=True)
-    return False
+    return touch_send_batch([rest])
 
 
 def handle_keyev(p):
@@ -188,6 +205,27 @@ def handle_keyev(p):
             run(["keyevent", str(code)])
 
 
+def _scroll_swipe_fallback(sx, sy, vs, hs):
+    global _last_scroll_fallback
+    now = time.monotonic()
+    if now - _last_scroll_fallback < 0.18:
+        return
+    _last_scroll_fallback = now
+    cx = int(max(250, min(830, round(sx))))
+    cy = int(max(450, min(1950, round(sy))))
+    if abs(vs) >= abs(hs):
+        dist = int(min(850, max(350, round(550 * abs(vs)))))
+        ey = cy - dist if vs > 0 else cy + dist
+        ey = int(max(250, min(2150, ey)))
+        handle(f"swipe {cx} {cy} {cx} {ey} 120")
+    else:
+        hsy = int(max(600, min(1800, cy)))
+        if hs < 0:
+            handle(f"swipe 880 {hsy} 180 {hsy} 140")
+        else:
+            handle(f"swipe 180 {hsy} 880 {hsy} 140")
+
+
 def handle_touch(p):
     """p = ["touch", verb, ...]. Live path first; if the gesture could not be streamed end to end,
     replay it on release as tap/swipe (the pre-injector behaviour)."""
@@ -195,6 +233,16 @@ def handle_touch(p):
     if verb == "C":
         touch_send("C")
         _gest.clear()
+        return
+    if verb == "S" and len(p) >= 6:
+        try:
+            sx, sy, vs, hs = float(p[2]), float(p[3]), float(p[4]), float(p[5])
+        except ValueError:
+            return
+        if TOUCH is not None and _ensure_touch() and _tscroll_ok:
+            if touch_send(f"S {sx} {sy} {vs} {hs}"):
+                return
+        _scroll_swipe_fallback(sx, sy, vs, hs)
         return
     if len(p) < 5 or verb not in ("D", "M", "U"):
         return
@@ -270,6 +318,10 @@ while True:
         print("refused input client from", addr, flush=True)
         conn.close()
         continue
+    try:
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
     print("input client connected:", addr, flush=True)
     buf = b""
     try:
@@ -277,9 +329,21 @@ while True:
             b = conn.recv(4096)
             if not b: break
             buf += b
+            touch_batch = []
             while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                handle(line.decode("utf-8", "replace").strip())
+                line_b, buf = buf.split(b"\n", 1)
+                line = line_b.decode("utf-8", "replace").strip()
+                parts = line.split()
+                if (len(parts) >= 5 and parts[0] == "touch" and parts[1] == "M"
+                        and TOUCH is not None):
+                    touch_batch.append(" ".join(parts[1:]))
+                    continue
+                if touch_batch:
+                    touch_send_batch(touch_batch)
+                    touch_batch.clear()
+                handle(line)
+            if touch_batch:
+                touch_send_batch(touch_batch)
     except OSError:
         pass
     finally:
