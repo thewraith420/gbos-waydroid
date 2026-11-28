@@ -309,8 +309,18 @@ watch_phone() {
                 log "phone $ip connected; a re-arm server is already listening on 8091"
             else
                 log "phone $ip connected; starting the re-arm server so the app's button can restore touch"
-                "$PY" "$APPDIR/phone_rearm.py" --phone "$ip" \
-                    --token "$( "$PY" -c 'import secrets;print(secrets.token_hex(8))' )" \
+                # The SAME token appcast_session.py keeps in $STATE/agent-token. The phone's gesture agent keeps the
+                # token it was started with, and the re-arm server only checks that the agent's port answers, not
+                # the token. MEASURED 2026-11-28: a fresh random token here left a days-old agent on the old one, so
+                # the relay's launch / Home lines were silently dropped (apps opened from GBOS showed whatever the
+                # phone had up) while live touch, restarted with the new token, kept working.
+                local tok
+                tok=$(cat "$STATE/agent-token" 2>/dev/null)
+                if [ -z "$tok" ]; then
+                    tok=$("$PY" -c 'import secrets;print(secrets.token_hex(8))')
+                    (umask 077; echo "$tok" >"$STATE/agent-token")
+                fi
+                "$PY" "$APPDIR/phone_rearm.py" --phone "$ip" --token "$tok" \
                     >>$GB_RUN/appcast_rearm.log 2>&1 &
             fi
             return 0
